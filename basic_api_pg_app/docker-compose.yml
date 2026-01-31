@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  # 1. Naše aplikace (FastAPI)
+  web:
+    build: .             # "Uvař image z této složky"
+    ports:
+      - "8000:8000"      # "Propíchni port ven"
+    depends_on:
+      - db               # "Počkej, až nastartuje databáze"
+    # DŮLEŽITÉ: Tady říkáme aplikaci, kde najde databázi
+    environment:
+      DATABASE_URL: postgresql://moje_uzivatel:moje_heslo@db:5432/moje_databaze
+
+  # 2. Databáze (Postgres)
+  db:
+    image: postgres:15   # "Stáhni oficiální Postgres"
+    environment:
+      POSTGRES_USER: moje_uzivatel
+      POSTGRES_PASSWORD: moje_heslo
+      POSTGRES_DB: moje_databaze
+    # Tady říkáme: "Data ukládej na pevný disk počítače, ne jen do paměti kontejneru"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+# Definice úložiště pro databázi
+volumes:
+  postgres_data:
