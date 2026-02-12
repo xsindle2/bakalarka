@@ -1,0 +1,24 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_NAME: zuj-name_db
+      DB_USER: student
+      DB_PASS: heslo123
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: zuj-name_db
+      POSTGRES_USER: student
+      POSTGRES_PASSWORD: heslo123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
