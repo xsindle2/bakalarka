@@ -1,0 +1,28 @@
+1. Vytvořil jsem jednoduchou aplikaci s API, která na základě zadaného ZUJ kódu vrátí obec.
+
+   Pokud se kód přesně shoduje s některou obcí, vrátí pouze onu obec. Pokud kód nebyl nalezen, vrátí 
+   maximálně pět obcí, jejichž ZUJ je nejblíže k requestu. Pro výpočet vzdálenosti jsem použil 
+   Levenshteinovu vzdálenost, což si myslím, že je vhodný přístup i v případě finální podoby aplikace.
+
+   Přemýšlel jsem o způsobu, jak vytvořit finální datovou strukturu. Zatím nejlepším řešením se mi 
+   jeví vytvořit dvě tabulky:
+   • Municipality (obec_pk, id, nazev_obce)
+   • IDs (pk, id, obec_pk, value, type, priority)
+
+   Pokud nastane přesná shoda, vrátí se přímo obec pomocí B-tree indexace. Pokud přesná shoda nenastane, 
+   bude nasazen GIN index nad trigramy a výsledky budou seřazeny podle shody a priority.
+
+   Přidávání nových IDs by mělo být dostatečně rychlé (přidání do B-tree + je potřeba 
+   vytvořit GIN indexy pro trigramy všech nových hodnot).
+
+
+2. Stále to samé:
+   • Sjednotit sesbírané datové zdroje a mapování mezi IDs do databázové struktury v Postgres.
+   • Navrhnout a naimplementovat algoritmy pro vyhledávání.
+   • Vytvoření API.
+   • Validace a testování.
+
+3. Pokud způsob datové struktury uznaš za vhodný, mohu začít vytvářet aplikaci v nějakém malém měřítku 
+   (pro pár IDs) s nějakým jednoduchým fuzzy vyhledáváním.
+
+4. Problémy zatím nemám. Pouze si nejsem jistý, zda celý projekt beru ze správného konce. 

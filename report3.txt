@@ -1,0 +1,8 @@
+1.1 Jakým zpusobem modelovat hiararchii v DB. Tabulku IDs (pk_id, location_pk, value, type, priority)
+    nechame stejnou.
+    Prvni tabulku Municipality upravime na Geo_locations (pk_id, location_pk, parent_id, nazev_obce, ltree_path)
+    Využití modulu ltree je výhodné, protože efektivně reprezentuje hierarchii územních celků (kraj–okres–obec) formou cesty,
+    čímž zrychluje dotazy bleskovým indexovaným vyhledáváním. To umožňuje efektivne získat jak nadřazené celky, tak seznam
+    všech podřízených celku.
+    Vyhodou tohoto pristupu je oddeleni vyhledavaci logiky od hierarchickeho rozdeleni.
+    

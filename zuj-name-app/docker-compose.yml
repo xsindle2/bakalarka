@@ -7,14 +7,14 @@ services:
       - db
     environment:
       DB_HOST: db
-      DB_NAME: bakalarka_db
+      DB_NAME: zuj-name_db
       DB_USER: student
       DB_PASS: heslo123
 
   db:
     image: postgres:15
     environment:
-      POSTGRES_DB: bakalarka_db
+      POSTGRES_DB: zuj-name_db
       POSTGRES_USER: student
       POSTGRES_PASSWORD: heslo123
     volumes:
