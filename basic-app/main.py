@@ -7,6 +7,77 @@ from typing import List, Dict
 
 app = FastAPI()
 
+def vycistit_nazev(nazev_s_typem):
+    # musime orezat predpony
+    predpony = [
+        "Hlavní město ",
+        "Statutární město ", 
+        "Město ",
+        "Městys ",
+        "Obec "
+    ]
+    
+    cisty_nazev = nazev_s_typem.strip()
+    
+    for p in predpony:
+        if cisty_nazev.startswith(p):
+            return cisty_nazev[len(p):]
+            
+    return cisty_nazev
+
+def nahrat_ico(cursor):
+    print("Kontroluji IČO data...")
+    
+    cursor.execute("SELECT count(*) FROM ids WHERE type='ICO';")
+    if cursor.fetchone()[0] > 0:
+        print("IČO data už v databázi jsou")
+        return
+
+    cursor.execute("SELECT nazev_obce, pk FROM municipality;")
+    obce_mapa = {row[0]: row[1] for row in cursor.fetchall()}
+    
+    log_soubor = "chyby_parovani.txt"
+    
+    try:
+        with open('uzemni-samosprava_obce_30-11-2025.csv', 'r', encoding='utf-8') as f_in, \
+             open(log_soubor, 'w', encoding='utf-8') as f_log:
+            
+            reader = csv.reader(f_in, delimiter=';') 
+            next(reader)
+            f_log.write("IČO;Původní název;Očištěný název;Důvod\n")
+            
+            vlozeno = 0
+            chyby = 0
+            
+            for radek in reader:
+                try:
+                    ico_hodnota = radek[0]
+                    nazev_original = radek[1]
+                    
+                    nazev_hledany = vycistit_nazev(nazev_original)
+                    pk_obce = obce_mapa.get(nazev_hledany)
+                    
+                    if pk_obce:
+                        cursor.execute(
+                            "INSERT INTO ids (obec_pk, value, type, priority) VALUES (%s, %s, %s, %s)",
+                            (pk_obce, ico_hodnota, 'ICO', 80)
+                        )
+                        vlozeno += 1
+                    else:
+                        # NENALEZENO
+                        f_log.write(f"{ico_hodnota};{nazev_original};{nazev_hledany};Nenalezeno v DB\n")
+                        chyby += 1
+                        
+                except IndexError:
+                    # poskozeny radek
+                    continue
+            
+            print(f"IČO nahráno. Spárováno: {vlozeno}")
+            print(f"Počet chyb: {chyby}. Detaily v souboru '{log_soubor}'")
+
+    except FileNotFoundError:
+        print("Chyba: Soubor CSV nenalezen.")
+
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("DB_HOST"),
@@ -18,29 +89,20 @@ def get_db_connection():
 @app.on_event("startup")
 def startup_db():
     conn = None
-    # 1. Čekání na DB
     for _ in range(10):
         try:
             conn = get_db_connection()
-            print("Připojeno k DB.")
             break
         except psycopg2.OperationalError:
-            print("DB startuje, čekám...")
             time.sleep(2)
     
-    if not conn:
-        print("Nepodařilo se připojit k DB.")
-        return
-
+    if not conn: return
     cursor = conn.cursor()
 
-    # 2. AKTIVACE ROZŠÍŘENÍ PRO FUZZY SEARCH (Trigrams)
-    # Tohle je klíčové pro GIN index
+    # ROZŠÍŘENÍ PRO FUZZY SEARCH (Trigrams)
     cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
-
-    # 3. VYTVOŘENÍ TABULEK (Podle návrhu vedoucího)
     
-    # Tabulka Municipality (Obce)
+    # Tabulka Municipality
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS municipality (
             pk SERIAL PRIMARY KEY,
@@ -48,10 +110,7 @@ def startup_db():
         );
     """)
 
-    # Tabulka IDs (Identifikátory)
-    # value = samotný kód (např. '554782')
-    # type = typ kódu (např. 'LAU2', 'ICO')
-    # priority = váha (např. 100 pro LAU2, 50 pro IČO - vyšší číslo = vyšší priorita)
+    # Tabulka IDs (value, type, priority)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ids (
             pk SERIAL PRIMARY KEY,
@@ -62,39 +121,36 @@ def startup_db():
         );
     """)
 
-    # 4. VYTVOŘENÍ INDEXŮ (Klíč pro rychlost)
     
-    # B-Tree index pro PŘESNOU shodu (rychlé =)
+    # B-Tree index pro presnou shodu
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ids_value_btree ON ids (value);")
     
-    # GIN index pro PODOBNOST (rychlé LIKE a %)
-    # gin_trgm_ops je speciální operátor z pg_trgm
+    # GIN index pro fuzzy search
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ids_value_gin ON ids USING GIN (value gin_trgm_ops);")
     
     conn.commit()
 
-    # 5. NAHRÁNÍ DAT (Pokud je tabulka prázdná)
+    # NAHRÁNÍ DAT (Pokud je tabulka prázdná)
     cursor.execute("SELECT count(*) FROM municipality;")
     if cursor.fetchone()[0] == 0:
         print("Nahrávám data z zuj-name.csv...")
         try:
             with open('zuj-name.csv', 'r', encoding='utf-8') as f:
                 reader = csv.reader(f)
-                next(reader) # Přeskočit hlavičku
+                next(reader) 
                 
                 for radek in reader:
                     lau2_code = radek[3] # ZUJ
                     nazev = radek[5]     # Název
                     
-                    # A) Vložíme obec a získáme její ID (pk)
+                    # vlozeni obce
                     cursor.execute(
                         "INSERT INTO municipality (nazev_obce) VALUES (%s) RETURNING pk;",
                         (nazev,)
                     )
                     novy_pk_obce = cursor.fetchone()[0]
 
-                    # B) Vložíme kód do tabulky IDs
-                    # Typ nastavíme na 'LAU2', Prioritu třeba na 100
+                    # vlozeni id
                     cursor.execute(
                         """
                         INSERT INTO ids (obec_pk, value, type, priority) 
@@ -112,72 +168,119 @@ def startup_db():
             print(f"Chyba při nahrávání: {e}")
             conn.rollback()
     
+    
+    nahrat_ico(cursor)
+    
+    conn.commit()
     cursor.close()
     conn.close()
 
 
-# --- ENDPOINT ---
-
 @app.get("/search/{query}")
-def search_id(query: str):
+def search_id(
+    query: str, 
+    # parametr 'type'. Defaultně je None (hledá vše).
+    search_type: str = Query(None, regex="^(ico|zuj|lau2)$") 
+):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # KROK 1: Přesná shoda (B-Tree Index) - Zůstává stejné
-    # Je to nejrychlejší, tak to zkusíme první
+    db_type_filter = None
+    if search_type:
+        search_type = search_type.lower()
+        if search_type == 'zuj' or search_type == 'lau2':
+            db_type_filter = 'LAU2'
+        elif search_type == 'ico':
+            db_type_filter = 'ICO'
+
+    # exact match
+    hledane_hodnoty = [query]
+    if query.isdigit() and len(query) < 8:
+        hledane_hodnoty.append(query.zfill(8))
+
     sql_exact = """
-        SELECT m.nazev_obce, i.value, i.type 
+        SELECT m.nazev_obce, i.value, i.type, i.priority 
         FROM ids i
         JOIN municipality m ON i.obec_pk = m.pk
-        WHERE i.value = %s;
+        WHERE i.value = ANY(%s)
     """
-    cursor.execute(sql_exact, (query,))
-    presna = cursor.fetchone()
+    params_exact = [hledane_hodnoty]
 
-    if presna:
+    # Dynamické přidání filtru
+    if db_type_filter:
+        sql_exact += " AND i.type = %s"
+        params_exact.append(db_type_filter)
+    
+    # Seřazení
+    sql_exact += " ORDER BY i.priority DESC;"
+
+    cursor.execute(sql_exact, tuple(params_exact))
+    presne_vysledky = cursor.fetchall()
+
+    if presne_vysledky:
         cursor.close()
         conn.close()
+        
+        response_data = []
+        for row in presne_vysledky:
+            response_data.append({
+                "obec": row[0],
+                "kod": row[1],
+                "typ": row[2],
+                "shoda": "100 %"
+            })
+
         return {
             "status": "exact_match",
-            "result": {
-                "obec": presna[0],
-                "kod": presna[1],
-                "typ": presna[2]
-            }
+            "filter": db_type_filter if db_type_filter else "all",
+            "count": len(response_data),
+            "results": response_data
         }
 
-    # KROK 2: Podobnost (GIN Index + Vzdálenost) - ZMĚNA ZDE
-    # Místo operátoru % (který filtruje) použijeme <-> (který řadí).
-    # <-> vrací vzdálenost (0 = stejné, 1 = úplně jiné).
-    # My chceme co nejmenší vzdálenost, proto ORDER BY ... ASC
+    # FUZZY VYHLEDÁVÁNÍ
     
     sql_fuzzy = """
         SELECT m.nazev_obce, i.value, i.type, (i.value <-> %s) as vzdalenost
         FROM ids i
         JOIN municipality m ON i.obec_pk = m.pk
-        ORDER BY (i.value <-> %s) ASC, i.priority DESC
-        LIMIT 5;
     """
+    params_fuzzy = [query]
+
+    if db_type_filter:
+        sql_fuzzy += " WHERE i.type = %s"
+        params_fuzzy.append(db_type_filter)
     
-    cursor.execute(sql_fuzzy, (query, query))
-    vysledky = cursor.fetchall()
+
+    sql_fuzzy += " ORDER BY (i.value <-> %s) ASC, i.priority DESC LIMIT 5;"
+    params_fuzzy.append(query) # Třetí parametr (znovu query pro ORDER BY)
+    
+    sql_fuzzy_final = """
+        SELECT m.nazev_obce, i.value, i.type, (i.value <-> %s) as vzdalenost
+        FROM ids i
+        JOIN municipality m ON i.obec_pk = m.pk
+    """
+    query_params = [query]
+    
+    if db_type_filter:
+        sql_fuzzy_final += " WHERE i.type = %s "
+        query_params.append(db_type_filter)
+        
+    sql_fuzzy_final += " ORDER BY (i.value <-> %s) ASC, i.priority DESC LIMIT 5;"
+    query_params.append(query)
+
+    cursor.execute(sql_fuzzy_final, tuple(query_params))
+    vysledky_fuzzy = cursor.fetchall()
     
     cursor.close()
     conn.close()
 
-    if not vysledky:
+    if not vysledky_fuzzy:
         raise HTTPException(status_code=404, detail="Nic nenalezeno.")
 
     response_data = []
-    for row in vysledky:
-        # Vzdálenost převedeme na procenta shody (jen pro hezký výstup)
-        # 1 - vzdálenost = shoda (např. 1 - 0.4 = 0.6, tedy 60%)
+    for row in vysledky_fuzzy:
         shoda_procenta = round((1 - row[3]) * 100, 2)
-        
-        # Filtrujeme úplné nesmysly v Pythonu
-        # Pokud je shoda menší než 10 %, raději to neukážeme
-        if shoda_procenta < 10:
-            continue
+        if shoda_procenta < 10: continue
 
         response_data.append({
             "obec": row[0],
@@ -191,5 +294,6 @@ def search_id(query: str):
 
     return {
         "status": "fuzzy_match",
+        "filter": db_type_filter if db_type_filter else "all",
         "results": response_data
     }
