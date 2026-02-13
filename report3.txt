@@ -1,8 +1,27 @@
-1.1 Jakým zpusobem modelovat hiararchii v DB. Tabulku IDs (pk_id, location_pk, value, type, priority)
-    nechame stejnou.
-    Prvni tabulku Municipality upravime na Geo_locations (pk_id, location_pk, parent_id, nazev_obce, ltree_path)
+1.1 Upravil jsem nástřel aplikace. Přidal jsem indexaci jak pomocí B-tree, tak pomocí GIN
+    indexu (trigramy) – fuzzy search už se nedělá pomocí Levenshteinovy vzdálenosti.
+    Přidal jsem další parametr – IČO – programovatelně, tak jak jsi avizoval.
+    Endpoint jsem rozšířil o možnost vyhledávat pouze konkrétní ID (ZUJ nebo IČO).
+    Obecné vyhledávání stále zůstalo s tím, že pokud se najdou dvě shodné hodnoty u různých
+    obcí, skript vrátí všechny tyto exact matches.
+
+1.2 Návrh způsobu modelování hierarchie v DB? (toto jsem zatím nezapracoval)
+    Tabulku IDs (pk_id, location_pk, value, type, priority) necháme stejnou.
+    První tabulku Municipality upravíme na Geo_locations (pk_id, location_pk, parent_id, nazev_obce, ltree_path).
     Využití modulu ltree je výhodné, protože efektivně reprezentuje hierarchii územních celků (kraj–okres–obec) formou cesty,
-    čímž zrychluje dotazy bleskovým indexovaným vyhledáváním. To umožňuje efektivne získat jak nadřazené celky, tak seznam
-    všech podřízených celku.
-    Vyhodou tohoto pristupu je oddeleni vyhledavaci logiky od hierarchickeho rozdeleni.
-    
+    čímž zrychluje dotazy rychlým indexovaným vyhledáváním. To umožňuje efektivně získat jak nadřazené celky, tak seznam
+    všech podřízených celků.
+    Výhodou tohoto přístupu je oddělení vyhledávací logiky od hierarchického rozdělení.
+
+2.  Zavést hierarchii v datové struktuře. Přidat všechna zatím známá IDs do struktury.
+    Vytvoření API. Různé způsoby vyhledávání + ID priorities.
+    Validace a testování.
+
+3.  Vytvořit v databázi hierarchii územních celků.
+    Přidat do datové struktury více IDs pro různé celky.
+    Přidat funkcionalitu přidávání a odebírání obcí (toto jsem ještě nedělal, protože mám pocit, že
+    bude rozumnější dodat tuto funkci až po zavedení hierarchie územních celků).
+
+4.  Problémy žádné nemám. Pouze přemýšlím nad tím, jakým způsobem zvolit priority v tabulce IDs.
+    Nevím totiž, která IDs budou pro aplikaci nejvíce valuable. Zároveň je to ale asi něco,
+    co můžeme doladit spíše ke konci procesu vývoje.

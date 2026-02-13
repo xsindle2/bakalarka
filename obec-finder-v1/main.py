@@ -2,7 +2,7 @@ import time
 import csv
 import os
 import psycopg2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from typing import List, Dict
 
 app = FastAPI()
