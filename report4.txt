@@ -1,0 +1,14 @@
+1.  Přidal jsem hierarchickou strukturu (Kraj – Okres – Obec) s využitím rozšíření PostgreSQL ltree.
+    Dále jsem aplikaci rozšířil o endpointy pro přidávání a mazání obcí – nová lokace se
+    přiřazením kódů a rodiče automaticky správně zařadí do stromu.
+    Smazání obce proběhne přes nějaký známý identifikátor a konzistentně odstraní lokaci i všechna její
+    data.
+
+2.  Přidat všechna zatím známá IDs do struktury.
+    Přidání volumes do Dockeru, aby se nově přidané obce nesmazaly v případě restartu aplikace.
+    Doladění API. Různé způsoby vyhledávání + ID priorities.
+    Validace a testování.
+
+3.  Přidat více známých IDs do struktury.
+
+4.  Problémy žádné nemám. Pouze si nejsem jistý, jestli je způsob přidávání a mazání obcí přes API ten správný.
