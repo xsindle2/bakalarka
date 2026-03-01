@@ -4,12 +4,28 @@ import json
 import os
 import psycopg2
 from fastapi import FastAPI, HTTPException, Query
-from typing import List, Dict
+from pydantic import BaseModel
+from typing import List, Dict, Optional
 
 app = FastAPI()
 
+# --- PYDANTIC MODELY PRO PŘIDÁVÁNÍ NOVÝCH DAT ---
+
+class Identifikator(BaseModel):
+    type: str
+    value: str
+    priority: int = 80
+
+class LocationCreate(BaseModel):
+    nazev: str
+    typ: str = "OBEC"      # Defaultně přidáváme obec, ale můžeme přidat i okres
+    parent_kod: str        # ZMĚNA: ID nadřazeného celku podle známého kódu (např. LAU1 kód okresu)
+    identifikatory: List[Identifikator] = []
+
+# -------------------------------------------------
+
 def vycistit_nazev(nazev_s_typem):
-    # orezani predpon
+    # musime orezat predpony
     predpony = [
         "Hlavní město ",
         "Statutární město ", 
@@ -27,6 +43,7 @@ def vycistit_nazev(nazev_s_typem):
     return cisty_nazev
 
 def nahrat_ico(cursor):
+    """funkce pro nahrání IČO ze souboru"""
     print("Kontroluji IČO data...")
     
     cursor.execute("SELECT count(*) FROM ids WHERE type='ICO';")
@@ -248,6 +265,111 @@ def startup_db():
     cursor.close()
     conn.close()
 
+
+# ENDPOINTY PRO PŘIDÁNÍ A SMAZÁNÍ LOKACE
+
+@app.post("/location", status_code=201)
+def create_location(location: LocationCreate):
+    """Vytvoří novou lokaci na základě známého kódu rodiče."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # 1. Najdeme interní ID rodiče na základě jeho známého kódu (parent_kod)
+        cursor.execute("""
+            SELECT gl.pk_id, gl.ltree_path 
+            FROM ids i
+            JOIN geo_locations gl ON i.location_pk = gl.pk_id
+            WHERE i.value = %s
+            LIMIT 1;
+        """, (location.parent_kod,))
+        
+        parent_row = cursor.fetchone()
+        
+        if not parent_row:
+            raise HTTPException(status_code=404, detail=f"Nadřazená lokace s kódem '{location.parent_kod}' nebyla nalezena.")
+        
+        parent_pk_id, parent_path = parent_row
+        
+        # 2. Vložení nové lokace pomocí nalezeného parent_pk_id
+        cursor.execute(
+            "INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, %s, %s) RETURNING pk_id;",
+            (parent_pk_id, location.typ, location.nazev)
+        )
+        new_id = cursor.fetchone()[0]
+        
+        # 3. Aktualizace ltree_path
+        new_path = f"{parent_path}.{new_id}"
+        cursor.execute(
+            "UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;",
+            (new_path, new_id)
+        )
+        
+        # 4. Vložení identifikátorů do tabulky ids
+        for ident in location.identifikatory:
+            cursor.execute(
+                "INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s);",
+                (new_id, ident.value, ident.type, ident.priority)
+            )
+        
+        conn.commit()
+        return {
+            "message": f"Lokace '{location.nazev}' byla úspěšně vytvořena pod nadřazeným celkem '{location.parent_kod}'.",
+            "ltree_path": new_path
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Chyba databáze: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.delete("/location/{identifier_value}")
+def delete_location(identifier_value: str):
+    """Smaže lokaci podle jakéhokoliv známého identifikátoru (IČO, LAU1, atd.)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Nalezení interního ID a názvu lokace podle zadaného kódu
+        cursor.execute("""
+            SELECT gl.pk_id, gl.nazev, gl.typ
+            FROM ids i
+            JOIN geo_locations gl ON i.location_pk = gl.pk_id
+            WHERE i.value = %s
+            LIMIT 1;
+        """, (identifier_value,))
+        
+        row = cursor.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Lokace s kódem '{identifier_value}' nebyla nalezena.")
+            
+        pk_id, nazev_mazane_lokace, typ_lokace = row
+
+        # Smazání
+        cursor.execute("DELETE FROM geo_locations WHERE pk_id = %s;", (pk_id,))
+        conn.commit()
+        
+        return {
+            "message": f"{typ_lokace} '{nazev_mazane_lokace}' a všechny k němu navázané kódy byly úspěšně smazány."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Chyba databáze: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+
+# VYHLEDÁVACÍ ENDPOINT
 
 @app.get("/search/{query}")
 def search_id(
