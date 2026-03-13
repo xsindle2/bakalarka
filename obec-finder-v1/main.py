@@ -1,16 +1,34 @@
 import time
 import csv
-import json
 import os
+import re
 import psycopg2
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List
 
 app = FastAPI()
 
-# --- PYDANTIC MODELY PRO PŘIDÁVÁNÍ NOVÝCH DAT ---
+# --- 1. STATICKÁ DATA PRO VYTVOŘENÍ STROMU ---
+MAPA_KRAJU = {
+    "Hlavní město Praha": ["Praha"], # VAZ používá jen "Praha"
+    "Středočeský kraj": ["Benešov", "Beroun", "Kladno", "Kolín", "Kutná Hora", "Mělník", "Mladá Boleslav", "Nymburk", "Praha-východ", "Praha-západ", "Příbram", "Rakovník"],
+    "Jihočeský kraj": ["České Budějovice", "Český Krumlov", "Jindřichův Hradec", "Písek", "Prachatice", "Strakonice", "Tábor"],
+    "Plzeňský kraj": ["Domažlice", "Klatovy", "Plzeň-město", "Plzeň-jih", "Plzeň-sever", "Rokycany", "Tachov"],
+    "Karlovarský kraj": ["Cheb", "Karlovy Vary", "Sokolov"],
+    "Ústecký kraj": ["Děčín", "Chomutov", "Litoměřice", "Louny", "Most", "Teplice", "Ústí nad Labem"],
+    "Liberecký kraj": ["Česká Lípa", "Jablonec nad Nisou", "Liberec", "Semily"],
+    "Královéhradecký kraj": ["Hradec Králové", "Jičín", "Náchod", "Rychnov nad Kněžnou", "Trutnov"],
+    "Pardubický kraj": ["Chrudim", "Pardubice", "Svitavy", "Ústí nad Orlicí"],
+    "Kraj Vysočina": ["Havlíčkův Brod", "Jihlava", "Pelhřimov", "Třebíč", "Žďár nad Sázavou"],
+    "Jihomoravský kraj": ["Blansko", "Brno-město", "Brno-venkov", "Břeclav", "Hodonín", "Vyškov", "Znojmo"],
+    "Olomoucký kraj": ["Jeseník", "Olomouc", "Prostějov", "Přerov", "Šumperk"],
+    "Zlínský kraj": ["Kroměříž", "Uherské Hradiště", "Vsetín", "Zlín"],
+    "Moravskoslezský kraj": ["Bruntál", "Frýdek-Místek", "Karviná", "Nový Jičín", "Opava", "Ostrava-město"]
+}
 
+
+# --- PYDANTIC MODELY ---
 class Identifikator(BaseModel):
     type: str
     value: str
@@ -18,22 +36,14 @@ class Identifikator(BaseModel):
 
 class LocationCreate(BaseModel):
     nazev: str
-    typ: str = "OBEC"      # Defaultně přidáváme obec, ale můžeme přidat i okres
-    parent_kod: str        # ZMĚNA: ID nadřazeného celku podle známého kódu (např. LAU1 kód okresu)
+    typ: str = "OBEC"      
+    parent_kod: str        
     identifikatory: List[Identifikator] = []
 
-# -------------------------------------------------
 
+# --- POMOCNÉ FUNKCE ---
 def vycistit_nazev(nazev_s_typem):
-    # musime orezat predpony
-    predpony = [
-        "Hlavní město ",
-        "Statutární město ", 
-        "Město ",
-        "Městys ",
-        "Obec "
-    ]
-    
+    predpony = ["Hlavní město ", "Statutární město ", "Město ", "Městys ", "Obec "]
     cisty_nazev = nazev_s_typem.strip()
     
     for p in predpony:
@@ -42,8 +52,13 @@ def vycistit_nazev(nazev_s_typem):
             
     return cisty_nazev
 
+def normalizovat_okres(okres_str):
+    return re.sub(r'\s*-\s*', '-', okres_str.strip())
+
+
+# --- PARSOVACÍ FUNKCE ---
 def nahrat_ico(cursor):
-    """funkce pro nahrání IČO ze souboru"""
+    """Nahrání IČO pomocí složeného klíče (Název obce + Název okresu)"""
     print("Kontroluji IČO data...")
     
     cursor.execute("SELECT count(*) FROM ids WHERE type='ICO';")
@@ -51,49 +66,45 @@ def nahrat_ico(cursor):
         print("IČO data už v databázi jsou")
         return
 
-    cursor.execute("SELECT nazev, pk_id FROM geo_locations WHERE typ = 'OBEC';")
-    obce_mapa = {row[0]: row[1] for row in cursor.fetchall()}
+    # Vytvoření mapy s kompozitním klíčem, aby nedošlo k záměně jmenovců
+    cursor.execute("""
+        SELECT o.nazev, ok.nazev, o.pk_id 
+        FROM geo_locations o 
+        JOIN geo_locations ok ON o.parent_id = ok.pk_id 
+        WHERE o.typ = 'OBEC' AND ok.typ = 'OKRES';
+    """)
     
-    log_soubor = "chyby_parovani.txt"
-    
+    obce_mapa = {}
+    for row in cursor.fetchall():
+        naz_obec = row[0].lower()
+        naz_okres = row[1].lower()
+        obce_mapa[(naz_obec, naz_okres)] = row[2]
+        
+    vlozeno = 0
     try:
-        with open('uzemni-samosprava_obce_30-11-2025.csv', 'r', encoding='utf-8') as f_in, \
-             open(log_soubor, 'w', encoding='utf-8') as f_log:
-            
-            reader = csv.reader(f_in, delimiter=';') 
+        with open('uzemni-samosprava_obce_30-11-2025.csv', 'r', encoding='utf-8') as f:
+            reader = csv.reader(f, delimiter=';')
             next(reader)
-            f_log.write("IČO;Původní název;Očištěný název;Důvod\n")
             
-            vlozeno = 0
-            chyby = 0
-            
-            for radek in reader:
-                try:
-                    ico_hodnota = radek[0].zfill(8)
-                    nazev_original = radek[1]
-                    
-                    nazev_hledany = vycistit_nazev(nazev_original)
-                    pk_obce = obce_mapa.get(nazev_hledany)
-                    
-                    if pk_obce:
-                        cursor.execute(
-                            "INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s)",
-                            (pk_obce, ico_hodnota, 'ICO', 80)
-                        )
-                        vlozeno += 1
-                    else:
-                        f_log.write(f"{ico_hodnota};{nazev_original};{nazev_hledany};Nenalezeno v DB\n")
-                        chyby += 1
-                        
-                except IndexError:
-                    continue
-            
-            print(f"IČO nahráno. Spárováno: {vlozeno}")
-            print(f"Počet chyb: {chyby}. Detaily v souboru '{log_soubor}'")
+            for row in reader:
+                ico = row[0].zfill(8)
+                nazev_obce = vycistit_nazev(row[1]).lower()
+                nazev_okresu = normalizovat_okres(row[2]).lower()
+                
+                # Záchranné sjednocení Prahy
+                if "hlavní město praha" in nazev_okresu:
+                    nazev_okresu = "praha"
 
+                # Hledáme obec BEZPEČNĚ podle jejího názvu i jejího okresu
+                pk_id = obce_mapa.get((nazev_obce, nazev_okresu))
+                
+                if pk_id:
+                    cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'ICO', 80);", (pk_id, ico))
+                    vlozeno += 1
+                    
+        print(f"IČO úspěšně nahráno a jmenovci vyřešeni. Spárováno: {vlozeno}")
     except FileNotFoundError:
-        print("Chyba: Soubor CSV s IČO nenalezen.")
-
+        print("Chyba: Soubor uzemni-samosprava_obce_30-11-2025.csv nenalezen.")
 
 def nahrat_cis_kody(cursor):
     """Přečte CIS soubory a nalepí IDs na Kraje a Okresy"""
@@ -105,13 +116,8 @@ def nahrat_cis_kody(cursor):
         return
 
     cursor.execute("SELECT typ, nazev, pk_id FROM geo_locations WHERE typ IN ('KRAJ', 'OKRES');")
-    db_uzly = {}
-    for row in cursor.fetchall():
-        typ, nazev, pk_id = row
-        nazev_norm = nazev.replace(" - ", "-").strip()
-        db_uzly[(typ, nazev_norm)] = pk_id
+    db_uzly = { (typ, nazev.replace(" - ", "-").strip()): pk_id for typ, nazev, pk_id in cursor.fetchall() }
 
-    # Ošetření pro Prahu z ČSÚ souborů
     if ('OKRES', 'Hlavní město Praha') in db_uzly:
         db_uzly[('OKRES', 'Praha')] = db_uzly[('OKRES', 'Hlavní město Praha')]
 
@@ -127,7 +133,7 @@ def nahrat_cis_kody(cursor):
                 if pk_id:
                     cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s);", (pk_id, row[8], 'NUTS3', 80))
     except FileNotFoundError:
-        print("Chyba: CIS0100_CS.csv nenalezen.")
+        pass
 
     try:
         # CIS0101 (Okresy - LAU1 a RUIAN)
@@ -143,9 +149,7 @@ def nahrat_cis_kody(cursor):
                     cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s);", (pk_id, row[9], 'LAU1', 80))
                     cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s);", (pk_id, row[11], 'RUIAN', 80))
     except FileNotFoundError:
-        print("Chyba: CIS0101_CS.csv nenalezen.")
-
-    print("Data pro Kraje a Okresy byla nahrána.")
+        pass
 
 
 def get_db_connection():
@@ -157,6 +161,7 @@ def get_db_connection():
     )
 
 
+# --- HLAVNÍ SPOUŠTĚCÍ LOGIKA ---
 @app.on_event("startup")
 def startup_db():
     conn = None
@@ -200,64 +205,67 @@ def startup_db():
     
     conn.commit()
 
-    # NAHRÁNÍ DAT
+    # --- ZCELA NOVÁ TVORBA STROMU POMOCÍ VAZ0043 A MAPA_KRAJU ---
     cursor.execute("SELECT count(*) FROM geo_locations;")
     if cursor.fetchone()[0] == 0:
+        print("Vytvářím stromovou strukturu přímo z VAZ dat a mapy krajů...")
         
-        print("Vytvářím stromovou strukturu z master_geo.json...")
-        try:
-            with open('master_geo.json', 'r', encoding='utf-8') as f:
-                master_data = json.load(f)
-            
-            id_map = {}
-            for uroven in ["KRAJ", "OKRES", "OBEC"]:
-                for uzel in master_data:
-                    if uzel['typ'] == uroven:
-                        db_parent_id = id_map.get(uzel['parent_id']) if uzel['parent_id'] else None
-                        
-                        cursor.execute(
-                            "INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, %s, %s) RETURNING pk_id;",
-                            (db_parent_id, uzel['typ'], uzel['nazev'])
-                        )
-                        nove_db_id = cursor.fetchone()[0]
-                        id_map[uzel['id']] = nove_db_id
-                        
-                        if db_parent_id:
-                            cursor.execute("SELECT ltree_path FROM geo_locations WHERE pk_id = %s;", (db_parent_id,))
-                            nova_cesta = f"{cursor.fetchone()[0]}.{nove_db_id}"
-                        else:
-                            nova_cesta = str(nove_db_id)
-                            
-                        cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (nova_cesta, nove_db_id))
-        except FileNotFoundError:
-            print("Chyba: master_geo.json nenalezen.")
+        # 1. Vložení Krajů
+        kraje_db = {}
+        for kraj_nazev in MAPA_KRAJU.keys():
+            cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (NULL, 'KRAJ', %s) RETURNING pk_id;", (kraj_nazev,))
+            pk_id = cursor.fetchone()[0]
+            cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (str(pk_id), pk_id))
+            kraje_db[kraj_nazev] = pk_id
 
-        print("Nahrávám ZUJ data ze zuj-name.csv...")
-        try:
-            cursor.execute("SELECT nazev, pk_id FROM geo_locations WHERE typ = 'OBEC';")
-            obce_mapa_zuj = {row[0]: row[1] for row in cursor.fetchall()}
+        # 2. Vložení Okresů
+        okresy_db = {}
+        for kraj_nazev, okresy in MAPA_KRAJU.items():
+            parent_kraj_id = kraje_db[kraj_nazev]
+            for okres_nazev in okresy:
+                cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, 'OKRES', %s) RETURNING pk_id;", (parent_kraj_id, okres_nazev))
+                pk_id = cursor.fetchone()[0]
+                ltree = f"{parent_kraj_id}.{pk_id}"
+                cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (ltree, pk_id))
+                okresy_db[okres_nazev.lower()] = pk_id
 
-            with open('zuj-name.csv', 'r', encoding='utf-8') as f:
+        # 3. Vložení Obcí přímo z VAZ s přiřazením ZUJ (LAU2) do správného okresu
+        try:
+            with open('VAZ0043_0101_CS.csv', 'r', encoding='utf-8') as f:
                 reader = csv.reader(f)
                 next(reader) 
                 
-                for radek in reader:
-                    lau2_code = radek[3] 
-                    nazev = radek[5]     
+                vlozeno = 0
+                for row in reader:
+                    # Sloupec 4 je ZUJ, 5 je Obec, 9 je Okres
+                    zuj = row[4]
+                    nazev_obce = vycistit_nazev(row[5])
+                    nazev_okresu = normalizovat_okres(row[9]).lower()
                     
-                    pk_obce = obce_mapa_zuj.get(nazev)
-                    if pk_obce:
-                        cursor.execute(
-                            "INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s)",
-                            (pk_obce, lau2_code, 'LAU2', 100)
-                        )
-            print("ZUJ data spárována.")
+                    if "hlavní město praha" in nazev_okresu:
+                        nazev_okresu = "praha"
+                        
+                    parent_okres_id = okresy_db.get(nazev_okresu)
+                    
+                    if parent_okres_id:
+                        # Vložíme obec bezpečně pod svůj okres!
+                        cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, 'OBEC', %s) RETURNING pk_id;", (parent_okres_id, nazev_obce))
+                        obec_pk = cursor.fetchone()[0]
+                        
+                        # Generování cesty ltree
+                        cursor.execute("SELECT ltree_path FROM geo_locations WHERE pk_id = %s;", (parent_okres_id,))
+                        parent_path = cursor.fetchone()[0]
+                        cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (f"{parent_path}.{obec_pk}", obec_pk))
+                        
+                        # Rovnou k ní přihodíme LAU2!
+                        cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'LAU2', 100);", (obec_pk, zuj))
+                        vlozeno += 1
+                        
+            print(f"Základní strom a LAU2 kódy byly úspěšně nahrány pro {vlozeno} obcí.")
         except FileNotFoundError:
-            print("Chyba: zuj-name.csv nenalezen.")
-        except Exception as e:
-            print(f"Chyba při nahrávání ZUJ: {e}")
+            print("Chyba: Soubor VAZ0043_0101_CS.csv nenalezen. Strom nemůže být sestaven.")
 
-    # Volání parsovacích funkcí
+    # 4. Dodatečné volání doplňkových kódů
     nahrat_ico(cursor)
     nahrat_cis_kody(cursor)
     
@@ -266,7 +274,7 @@ def startup_db():
     conn.close()
 
 
-# ENDPOINTY PRO PŘIDÁNÍ A SMAZÁNÍ LOKACE
+# --- ENDPOINTY PRO PŘIDÁNÍ A SMAZÁNÍ LOKACE ---
 
 @app.post("/location", status_code=201)
 def create_location(location: LocationCreate):
@@ -275,7 +283,7 @@ def create_location(location: LocationCreate):
     cursor = conn.cursor()
     
     try:
-        # 1. Najdeme interní ID rodiče na základě jeho známého kódu (parent_kod)
+        # 1. Najde interní ID rodiče na základě jeho známého kódu (parent_kod)
         cursor.execute("""
             SELECT gl.pk_id, gl.ltree_path 
             FROM ids i
@@ -300,10 +308,7 @@ def create_location(location: LocationCreate):
         
         # 3. Aktualizace ltree_path
         new_path = f"{parent_path}.{new_id}"
-        cursor.execute(
-            "UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;",
-            (new_path, new_id)
-        )
+        cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (new_path, new_id))
         
         # 4. Vložení identifikátorů do tabulky ids
         for ident in location.identifikatory:
@@ -313,13 +318,8 @@ def create_location(location: LocationCreate):
             )
         
         conn.commit()
-        return {
-            "message": f"Lokace '{location.nazev}' byla úspěšně vytvořena pod nadřazeným celkem '{location.parent_kod}'.",
-            "ltree_path": new_path
-        }
-        
-    except HTTPException:
-        raise
+        return {"message": f"Lokace '{location.nazev}' byla úspěšně vytvořena.", "ltree_path": new_path}
+    except HTTPException: raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Chyba databáze: {str(e)}")
@@ -347,20 +347,15 @@ def delete_location(identifier_value: str):
         row = cursor.fetchone()
         
         if not row:
-            raise HTTPException(status_code=404, detail=f"Lokace s kódem '{identifier_value}' nebyla nalezena.")
+            raise HTTPException(status_code=404, detail="Nenalezeno.")
             
         pk_id, nazev_mazane_lokace, typ_lokace = row
 
         # Smazání
         cursor.execute("DELETE FROM geo_locations WHERE pk_id = %s;", (pk_id,))
         conn.commit()
-        
-        return {
-            "message": f"{typ_lokace} '{nazev_mazane_lokace}' a všechny k němu navázané kódy byly úspěšně smazány."
-        }
-        
-    except HTTPException:
-        raise
+        return {"message": f"{typ_lokace} '{nazev_mazane_lokace}' byl smazán."}
+    except HTTPException: raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Chyba databáze: {str(e)}")
@@ -369,7 +364,7 @@ def delete_location(identifier_value: str):
         conn.close()
 
 
-# VYHLEDÁVACÍ ENDPOINT
+# --- VYHLEDÁVACÍ ENDPOINT ---
 
 @app.get("/search/{query}")
 def search_id(
@@ -382,16 +377,11 @@ def search_id(
     db_type_filter = None
     if search_type:
         search_type = search_type.lower()
-        if search_type in ['zuj', 'lau2']:
-            db_type_filter = 'LAU2'
-        elif search_type == 'ico':
-            db_type_filter = 'ICO'
-        elif search_type == 'nuts3':
-            db_type_filter = 'NUTS3'
-        elif search_type == 'lau1':
-            db_type_filter = 'LAU1'
-        elif search_type == 'ruian':
-            db_type_filter = 'RUIAN'
+        if search_type in ['zuj', 'lau2']: db_type_filter = 'LAU2'
+        elif search_type == 'ico': db_type_filter = 'ICO'
+        elif search_type == 'nuts3': db_type_filter = 'NUTS3'
+        elif search_type == 'lau1': db_type_filter = 'LAU1'
+        elif search_type == 'ruian': db_type_filter = 'RUIAN'
 
     # exact match
     hledane_hodnoty = [query]
