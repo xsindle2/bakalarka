@@ -1,0 +1,11 @@
+1.  Změnil jsem způsob, jakým se vytváří hierarchická struktura. Dosud jsem přidával obce pod okresy na základě jejich názvů,
+    ale spousta měst v ČR má stejné jméno, takže to nyní dělám přes vazební soubor na základě kódů ZUJ obcí.
+
+2.  Přidat všechna zatím známá ID do struktury.
+    Přidání volumes do Dockeru, aby se nově přidané obce nesmazaly v případě restartu aplikace.
+    Doladění API. Různé způsoby vyhledávání + priority ID.
+    Validace a testování.
+
+3.  Přidat více známých ID do struktury.
+
+4.  Problém, který jsem měl, byl způsoben právě obcemi, které se jmenují stejně, což jsem vyřešil.
