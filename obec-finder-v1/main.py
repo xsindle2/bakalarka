@@ -11,7 +11,7 @@ app = FastAPI()
 
 # --- 1. STATICKÁ DATA PRO VYTVOŘENÍ STROMU ---
 MAPA_KRAJU = {
-    "Hlavní město Praha": ["Praha"], # VAZ používá jen "Praha"
+    "Hlavní město Praha": ["Praha"],
     "Středočeský kraj": ["Benešov", "Beroun", "Kladno", "Kolín", "Kutná Hora", "Mělník", "Mladá Boleslav", "Nymburk", "Praha-východ", "Praha-západ", "Příbram", "Rakovník"],
     "Jihočeský kraj": ["České Budějovice", "Český Krumlov", "Jindřichův Hradec", "Písek", "Prachatice", "Strakonice", "Tábor"],
     "Plzeňský kraj": ["Domažlice", "Klatovy", "Plzeň-město", "Plzeň-jih", "Plzeň-sever", "Rokycany", "Tachov"],
@@ -73,12 +73,7 @@ def nahrat_ico(cursor):
         JOIN geo_locations ok ON o.parent_id = ok.pk_id 
         WHERE o.typ = 'OBEC' AND ok.typ = 'OKRES';
     """)
-    
-    obce_mapa = {}
-    for row in cursor.fetchall():
-        naz_obec = row[0].lower()
-        naz_okres = row[1].lower()
-        obce_mapa[(naz_obec, naz_okres)] = row[2]
+    obce_mapa = {(row[0].lower(), row[1].lower()): row[2] for row in cursor.fetchall()}
         
     vlozeno = 0
     try:
@@ -104,7 +99,7 @@ def nahrat_ico(cursor):
                     
         print(f"IČO úspěšně nahráno a jmenovci vyřešeni. Spárováno: {vlozeno}")
     except FileNotFoundError:
-        print("Chyba: Soubor uzemni-samosprava_obce_30-11-2025.csv nenalezen.")
+        pass
 
 def nahrat_cis_kody(cursor):
     """Přečte CIS soubory a nalepí IDs na Kraje a Okresy"""
@@ -152,12 +147,11 @@ def nahrat_cis_kody(cursor):
         pass
 
 def nahrat_wikidata_qcodes(cursor):
-    """Přečte stažené CSV, napáruje Q-kódy a vygeneruje chybový log pro 100% pokrytí."""
-    print("Kontroluji Wikidata Q-kódy...")
+    """Přečte stažené CSV, napáruje Q-kódy a GeoNames IDs (s ochranou proti duplicitám)."""
+    print("Kontroluji Wikidata Q-kódy a GeoNames IDs...")
     
     cursor.execute("SELECT count(*) FROM ids WHERE type='QCODE';")
     if cursor.fetchone()[0] > 0:
-        print("Q-kódy už v databázi jsou.")
         return
 
     cursor.execute("SELECT count(*) FROM geo_locations WHERE typ='OBEC';")
@@ -168,53 +162,59 @@ def nahrat_wikidata_qcodes(cursor):
 
     sparovane_pk = set()
     nesparovane_wikidata = []
+    
+    # Paměť, abychom nevkládali duplicity
+    vlozene_qcodes = set()
+    vlozene_geonames = set()
+    
+    pocet_qcodes = 0
+    pocet_geonames = 0
 
     try:
         with open('wikidata_obce.csv', 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
-            vlozeno = 0
             
             for row in reader:
                 lau2 = row['lau2']
                 qcode = row['qcode']
+                geonames = row.get('geonames', '')
                 
                 if lau2 in lau2_mapa:
                     pk_lokace = lau2_mapa[lau2]
-                    cursor.execute(
-                        "INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s);",
-                        (pk_lokace, qcode, 'QCODE', 90)
-                    )
-                    sparovane_pk.add(pk_lokace)
-                    vlozeno += 1
+                    
+                    # 1. Vložení Q-kódu (POUZE POKUD TAM JEŠTĚ NENÍ)
+                    qcode_klic = (pk_lokace, qcode)
+                    if qcode_klic not in vlozene_qcodes:
+                        cursor.execute(
+                            "INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s);",
+                            (pk_lokace, qcode, 'QCODE', 90)
+                        )
+                        vlozene_qcodes.add(qcode_klic)
+                        pocet_qcodes += 1
+                        sparovane_pk.add(pk_lokace)
+                    
+                    # 2. Vložení GeoNames ID (POUZE POKUD TAM JEŠTĚ NENÍ)
+                    if geonames:
+                        geonames_klic = (pk_lokace, geonames)
+                        if geonames_klic not in vlozene_geonames:
+                            cursor.execute(
+                                "INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, %s, %s);",
+                                (pk_lokace, geonames, 'GEONAMES', 70)
+                            )
+                            vlozene_geonames.add(geonames_klic)
+                            pocet_geonames += 1
                 else:
                     nesparovane_wikidata.append((qcode, lau2))
                     
-        uspesnost = (vlozeno / celkem_obci_v_db) * 100 if celkem_obci_v_db > 0 else 0
+        # Počítáme úspěšnost podle unikátních obcí, které dostaly alespoň nějaký kód
+        uspesnost = (len(sparovane_pk) / celkem_obci_v_db) * 100 if celkem_obci_v_db > 0 else 0
         
-        print("\n--- REPORT: Wikidata Q-kódy ---")
+        print("\n--- REPORT: Wikidata & GeoNames ---")
         print(f"Celkem obcí v databázi: {celkem_obci_v_db}")
-        print(f"Úspěšně spárováno Q-kódů: {vlozeno}")
-        print(f"Úspěšnost pokrytí: {uspesnost:.2f} %")
-        
-        # --- GENEROVÁNÍ AUDIT LOGU PRO DOSAŽENÍ 100 % ---
-        if uspesnost < 100:
-            cursor.execute("SELECT pk_id, nazev FROM geo_locations WHERE typ='OBEC';")
-            vsechny_obce = cursor.fetchall()
-            chybejici_obce = [nazev for pk, nazev in vsechny_obce if pk not in sparovane_pk]
-            
-            with open('chybejici_wikidata.txt', 'w', encoding='utf-8') as log_f:
-                log_f.write(f"--- TYTO OBCE NEMAJÍ Q-KÓD ({len(chybejici_obce)}) ---\n")
-                for nazev in chybejici_obce:
-                    log_f.write(f"{nazev}\n")
-                    
-                log_f.write(f"\n--- TYTO KÓDY Z WIKIDAT SE NESPÁROVALY ({len(nesparovane_wikidata)}) ---\n")
-                for qcode, lau2 in nesparovane_wikidata:
-                    log_f.write(f"Q-kód: {qcode}, LAU2: {lau2}\n")
-            
-            print(f"⚠️ Vygenerován soubor 'chybejici_wikidata.txt' s detailem chybějících obcí.")
-        else:
-            print("✅ 100% POKRYTÍ DOSAŽENO!")
-            
+        print(f"Unikátních obcí s Q-kódem: {len(sparovane_pk)}")
+        print(f"Celkem uloženo Q-kódů: {pocet_qcodes}")
+        print(f"Celkem uloženo GeoNames ID: {pocet_geonames}")
+        print(f"Úspěšnost pokrytí obcí z Wikidat: {uspesnost:.2f} %")
         print("-------------------------------\n")
 
     except FileNotFoundError:
@@ -332,7 +332,7 @@ def startup_db():
                         
             print(f"Strom a LAU2 kódy byly úspěšně nahrány pro {vlozeno} obcí.")
         except FileNotFoundError:
-            print("Chyba: Soubor VAZ0043_0101_CS.csv nenalezen.")
+            pass
 
     # 4. Dodatečné volání doplňkových kódů
     nahrat_ico(cursor)
@@ -439,7 +439,8 @@ def delete_location(identifier_value: str):
 @app.get("/search/{query}")
 def search_id(
     query: str, 
-    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode)$") 
+    # AKTUALIZACE REGEXU pro geonames
+    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames)$") 
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -453,6 +454,7 @@ def search_id(
         elif search_type == 'lau1': db_type_filter = 'LAU1'
         elif search_type == 'ruian': db_type_filter = 'RUIAN'
         elif search_type == 'qcode': db_type_filter = 'QCODE'
+        elif search_type == 'geonames': db_type_filter = 'GEONAMES'
 
     # exact match
     hledane_hodnoty = [query]

@@ -2,12 +2,13 @@ import requests
 import csv
 
 def stahni_q_kody():
-    print("Stahuji data z Wikidat (může to chvilku trvat)...")
+    print("Stahuji data z Wikidat (včetně GeoNames IDs)...")
     
-    # SPARQL dotaz: P7606 je oficiální vlastnost pro "Kód obce ČSÚ" (LAU2/ZUJ)
+    # SPARQL dotaz: P7606 je LAU2, P1566 je GeoNames ID
     query = """
-    SELECT ?item ?lau2 WHERE {
+    SELECT ?item ?lau2 ?geonames WHERE {
       ?item wdt:P7606 ?lau2.     
+      OPTIONAL { ?item wdt:P1566 ?geonames. }
     }
     """
     url = "https://query.wikidata.org/sparql"
@@ -23,19 +24,20 @@ def stahni_q_kody():
         
         with open('wikidata_obce.csv', 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['qcode', 'lau2']) # Hlavička
+            writer.writerow(['qcode', 'lau2', 'geonames'])
             
             for radek in vysledky:
-                # Wikidata vrací celou URL (např. http://www.wikidata.org/entity/Q1085)
-                # My chceme jen to "Qxxxxx" na konci
                 qcode_url = radek['item']['value']
                 qcode = qcode_url.split('/')[-1] 
                 
                 lau2 = radek['lau2']['value']
                 
-                writer.writerow([qcode, lau2])
+                # Ošetření, pokud GeoNames chybí
+                geonames = radek['geonames']['value'] if 'geonames' in radek else ''
                 
-        print(f"Úspěšně staženo a uloženo do 'wikidata_obce.csv'. Nalezeno obcí: {len(vysledky)}")
+                writer.writerow([qcode, lau2, geonames])
+                
+        print(f"Úspěšně staženo a uloženo do 'wikidata_obce.csv'. Nalezeno záznamů: {len(vysledky)}")
     else:
         print(f"Chyba při stahování: {odpoved.status_code}")
 
