@@ -77,7 +77,7 @@ def nahrat_ico(cursor):
         
     vlozeno = 0
     try:
-        with open('uzemni-samosprava_obce_30-11-2025.csv', 'r', encoding='utf-8') as f:
+        with open('tabulky/uzemni-samosprava_obce_30-11-2025.csv', 'r', encoding='utf-8') as f:
             reader = csv.reader(f, delimiter=';')
             next(reader)
             
@@ -171,7 +171,7 @@ def nahrat_wikidata_qcodes(cursor):
     pocet_geonames = 0
 
     try:
-        with open('wikidata_obce.csv', 'r', encoding='utf-8') as f:
+        with open('tabulky/wikidata_obce.csv', 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             
             for row in reader:
@@ -300,7 +300,7 @@ def startup_db():
 
         # 3. Vložení Obcí z VAZ s přiřazením ZUJ (LAU2) do správného okresu
         try:
-            with open('VAZ0043_0101_CS.csv', 'r', encoding='utf-8') as f:
+            with open('tabulky/VAZ0043_0101_CS.csv', 'r', encoding='utf-8') as f:
                 reader = csv.reader(f)
                 next(reader) 
                 
