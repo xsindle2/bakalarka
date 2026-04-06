@@ -1,0 +1,12 @@
+1.  Přidal jsem další 2 ID: Wikipedia Q-code a geonamesID.
+
+2.  Přidat všechna zatím známá ID do struktury.
+    Přidání volumes do Dockeru, aby se nově přidané obce nesmazaly v případě restartu aplikace.
+    Doladění API. Různé způsoby vyhledávání + priority ID.
+    Validace a testování.
+
+3.  ?
+
+4.  Nemám žádný implementační problém, ale spíše konceptuální. Nevím, do jaké míry je třeba řešit v aplikaci části obcí,
+    protože nevím, jaká ID mi mohou přijít. To je i důvod, proč jsem ještě nepřidal PSČ nebo ID ze stránky mesta.obce.cz.
+    Zatím aplikaci dělám tak nějak podle pocitu, bez velké znalosti toho, co mi může přijít a co přesně má vracet.
