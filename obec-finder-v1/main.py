@@ -220,6 +220,118 @@ def nahrat_wikidata_qcodes(cursor):
     except FileNotFoundError:
         print("Chyba: Soubor wikidata_obce.csv nenalezen. Přeskakuji.")
 
+def nahrat_mestske_casti(cursor):
+    """Nahraje městské části a obvody z vazebního souboru VAZ0044_0043_CS"""
+    print("Kontroluji Městské části...")
+    
+    # kontrola jestli uz jsou mestke casti nahrane, pokud ano, preskocime
+    cursor.execute("SELECT count(*) FROM geo_locations WHERE typ='MESTSKA_CAST';")
+    if cursor.fetchone()[0] > 0:
+        return
+
+    # mapa LAU2 kódů na primární klíče a cesty existujících obci
+    cursor.execute("""
+        SELECT i.value, gl.pk_id, gl.ltree_path 
+        FROM ids i 
+        JOIN geo_locations gl ON i.location_pk = gl.pk_id 
+        WHERE i.type = 'LAU2' AND gl.typ = 'OBEC';
+    """)
+    obce_podle_lau2 = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+
+    vlozeno = 0
+    try:
+        # Soubor s vazbami MOMC -> LAU2
+        with open('tabulky/VAZ0044_0043_CS-2.csv', 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader)
+            
+            for row in reader:
+                kod_momc = row[4]        # Kód městské části
+                nazev_mc = row[5]        # Název městské části
+                kod_lau2_matky = row[8]  # LAU2 kód mateřské obce
+                
+                matka_data = obce_podle_lau2.get(kod_lau2_matky)
+                
+                if matka_data:
+                    parent_pk, parent_ltree = matka_data
+                    
+                    # 1.vlozeni do geo_locations pod rodice
+                    cursor.execute(
+                        "INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, 'MESTSKA_CAST', %s) RETURNING pk_id;", 
+                        (parent_pk, nazev_mc)
+                    )
+                    mc_pk = cursor.fetchone()[0]
+                    
+                    # 2. nastaveni ltree cesty
+                    nova_cesta = f"{parent_ltree}.{mc_pk}"
+                    cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (nova_cesta, mc_pk))
+                    
+                    # 3. pridani momc do ids
+                    cursor.execute(
+                        "INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'MOMC', 90);", 
+                        (mc_pk, kod_momc)
+                    )
+                    vlozeno += 1
+                    
+        print(f"Městské části úspěšně nahrány. Zavěšeno {vlozeno} uzlů do stromu.")
+    except FileNotFoundError:
+        print("Chyba: Soubor tabulky/VAZ0044_0043_CS-2.csv nenalezen.")
+        
+def nahrat_casti_obci(cursor):
+    """Nahraje části obcí z vazebního souboru (např. VAZ0060_0043_CS)"""
+    print("Kontroluji Části obcí...")
+    
+    # kontrola, zda už máme části obcí vložené
+    cursor.execute("SELECT count(*) FROM geo_locations WHERE typ='CAST_OBCE';")
+    if cursor.fetchone()[0] > 0:
+        return
+
+    # mapa existujících obci podle jejich LAU2
+    cursor.execute("""
+        SELECT i.value, gl.pk_id, gl.ltree_path 
+        FROM ids i 
+        JOIN geo_locations gl ON i.location_pk = gl.pk_id 
+        WHERE i.type = 'LAU2' AND gl.typ = 'OBEC';
+    """)
+    obce_podle_lau2 = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+
+    vlozeno = 0
+    try:
+        with open('tabulky/VAZ0042_0043_CS.csv', 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader)
+            
+            for row in reader:
+                kod_co = row[4]          # Kód části obce
+                nazev_co = row[5]        # Název části obce
+                kod_lau2_matky = row[8]  # LAU2 kód mateřské obce
+                
+                matka_data = obce_podle_lau2.get(kod_lau2_matky)
+                
+                if matka_data:
+                    parent_pk, parent_ltree = matka_data
+                    
+                    # 1. vlozeni casti obce do geo_locations pod matku
+                    cursor.execute(
+                        "INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, 'CAST_OBCE', %s) RETURNING pk_id;", 
+                        (parent_pk, nazev_co)
+                    )
+                    co_pk = cursor.fetchone()[0]
+                    
+                    # 2. nastaveni ltree cesty
+                    nova_cesta = f"{parent_ltree}.{co_pk}"
+                    cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (nova_cesta, co_pk))
+                    
+                    # 3. pridani kodu části obce do ids
+                    cursor.execute(
+                        "INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'KOD_COBCE', 85);", 
+                        (co_pk, kod_co)
+                    )
+                    vlozeno += 1
+                    
+        print(f"Části obcí úspěšně nahrány. Zavěšeno {vlozeno} uzlů do stromu.")
+    except FileNotFoundError:
+        print("Chyba: Soubor s vazbami částí obcí nenalezen.")
 
 def get_db_connection():
     return psycopg2.connect(
@@ -338,6 +450,8 @@ def startup_db():
     nahrat_ico(cursor)
     nahrat_cis_kody(cursor)
     nahrat_wikidata_qcodes(cursor)
+    nahrat_mestske_casti(cursor) 
+    nahrat_casti_obci(cursor)
     
     conn.commit()
     cursor.close()
@@ -440,7 +554,7 @@ def delete_location(identifier_value: str):
 def search_id(
     query: str, 
     # AKTUALIZACE REGEXU pro geonames
-    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames)$") 
+    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce)$") 
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -455,6 +569,8 @@ def search_id(
         elif search_type == 'ruian': db_type_filter = 'RUIAN'
         elif search_type == 'qcode': db_type_filter = 'QCODE'
         elif search_type == 'geonames': db_type_filter = 'GEONAMES'
+        elif search_type == 'momc': db_type_filter = 'MOMC'
+        elif search_type == 'kod_cobce': db_type_filter = 'KOD_COBCE'
 
     # exact match
     hledane_hodnoty = [query]
