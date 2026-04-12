@@ -332,6 +332,106 @@ def nahrat_casti_obci(cursor):
         print(f"Části obcí úspěšně nahrány. Zavěšeno {vlozeno} uzlů do stromu.")
     except FileNotFoundError:
         print("Chyba: Soubor s vazbami částí obcí nenalezen.")
+        
+def nahrat_psc(cursor):
+    """Nahraje PSČ ze souboru a naváže je na MČ, Části obcí a na obec"""
+    print("Kontroluji PSČ...")
+    cursor.execute("SELECT count(*) FROM ids WHERE type='PSC';")
+    if cursor.fetchone()[0] > 0:
+        return
+
+    # MOMC kódy (Městské části)
+    cursor.execute("SELECT value, location_pk FROM ids WHERE type = 'MOMC';")
+    mapa_momc = {row[0].lstrip('0'): row[1] for row in cursor.fetchall()}
+
+    # Kódy částí obcí
+    cursor.execute("SELECT value, location_pk FROM ids WHERE type = 'KOD_COBCE';")
+    mapa_cobce = {row[0].lstrip('0'): row[1] for row in cursor.fetchall()}
+
+    # LAU2 kódy - celé obce
+    cursor.execute("SELECT value, location_pk FROM ids WHERE type = 'LAU2';")
+    mapa_obce = {row[0].lstrip('0'): row[1] for row in cursor.fetchall()}
+
+    vlozene_vazby_psc = set()
+    statistika = {"momc": 0, "cobce": 0, "obce": 0, "nenalezeno": 0}
+    unikatni_psc = set()
+    nenalezene_zaznamy = []
+
+    try:
+        with open('tabulky/zv_cobce_psc-2.csv', 'r', encoding='windows-1250') as f:
+            reader = csv.DictReader(f, delimiter=';')
+            
+            for row in reader:
+                psc = row.get('psc', '').replace(" ", "").strip()
+                if not psc: continue
+                
+                unikatni_psc.add(psc)
+                
+                # Odstraníme úvodní nuly
+                kod_momc = row.get('kodmomc', '').strip().lstrip('0')
+                kod_cobce = row.get('kodcobce', '').strip().lstrip('0')
+                kod_obce = row.get('kodobce', '').strip().lstrip('0')
+                nazev_cobce = row.get('nazcobce', '').strip()
+                
+                naslo_se_neco = False
+                
+                # 1. navážeme na městskou část
+                if kod_momc and kod_momc in mapa_momc:
+                    target_pk_momc = mapa_momc[kod_momc]
+                    klic_vazby_momc = (target_pk_momc, psc)
+                    if klic_vazby_momc not in vlozene_vazby_psc:
+                        cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'PSC', 60);", (target_pk_momc, psc))
+                        vlozene_vazby_psc.add(klic_vazby_momc)
+                        statistika["momc"] += 1
+                    naslo_se_neco = True
+                        
+                # 2. navážeme na část obce
+                if kod_cobce and kod_cobce in mapa_cobce:
+                    target_pk_cobce = mapa_cobce[kod_cobce]
+                    klic_vazby_cobce = (target_pk_cobce, psc)
+                    if klic_vazby_cobce not in vlozene_vazby_psc:
+                        cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'PSC', 60);", (target_pk_cobce, psc))
+                        vlozene_vazby_psc.add(klic_vazby_cobce)
+                        statistika["cobce"] += 1
+                    naslo_se_neco = True
+
+                # 3. navážeme na obec
+                    target_pk_obce = mapa_obce[kod_obce]
+                    klic_vazby_obce = (target_pk_obce, psc)
+                    if klic_vazby_obce not in vlozene_vazby_psc:
+                        # Priorita 50 (aby byly části obcí ve výsledcích výš)
+                        cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'PSC', 50);", (target_pk_obce, psc))
+                        vlozene_vazby_psc.add(klic_vazby_obce)
+                        statistika["obce"] += 1
+                    naslo_se_neco = True
+                
+                # Záznam do logu
+                if not naslo_se_neco:
+                    statistika["nenalezeno"] += 1
+                    nenalezene_zaznamy.append(f"PSČ: {psc} | Obec RÚIAN: {kod_obce} | Název z pošty: {nazev_cobce}")
+                    
+        # zapis nepodarenych vazeb do souboru
+        if nenalezene_zaznamy:
+            with open('chybejici_psc.txt', 'w', encoding='utf-8') as f_out:
+                f_out.write(f"Záznamy ({len(nenalezene_zaznamy)}), které se nepodařilo spárovat s žádným uzlem ve stromu:\n")
+                f_out.write("-" * 80 + "\n")
+                for z in nenalezene_zaznamy:
+                    f_out.write(z + "\n")
+
+        print("\n--- REPORT: Mapování PSČ ---")
+        print(f"Celkem unikátních PSČ v ČR: {len(unikatni_psc)}")
+        print(f"PSČ navázáno na Městské části: {statistika['momc']} vazeb")
+        print(f"PSČ navázáno na Části obcí: {statistika['cobce']} vazeb")
+        print(f"PSČ navázáno na hlavní Obce: {statistika['obce']} vazeb") 
+        
+        if statistika['nenalezeno'] > 0:
+            print(f"Nepodařilo se navázat {statistika['nenalezeno']} záznamů (vygenerován soubor 'chybejici_psc.txt').")
+        else:
+            print("Všechna PSČ byla úspěšně navázána")
+        print("-------------------------------\n")
+
+    except FileNotFoundError:
+        print("Chyba: Soubor tabulky/zv_cobce_psc-2.csv nenalezen.")
 
 def get_db_connection():
     return psycopg2.connect(
@@ -452,6 +552,7 @@ def startup_db():
     nahrat_wikidata_qcodes(cursor)
     nahrat_mestske_casti(cursor) 
     nahrat_casti_obci(cursor)
+    nahrat_psc(cursor)
     
     conn.commit()
     cursor.close()
@@ -553,9 +654,7 @@ def delete_location(identifier_value: str):
 @app.get("/search/{query}")
 def search_id(
     query: str, 
-    # AKTUALIZACE REGEXU pro geonames
-    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce)$") 
-):
+    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc)$")):
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -571,11 +670,14 @@ def search_id(
         elif search_type == 'geonames': db_type_filter = 'GEONAMES'
         elif search_type == 'momc': db_type_filter = 'MOMC'
         elif search_type == 'kod_cobce': db_type_filter = 'KOD_COBCE'
+        elif search_type == 'psc': db_type_filter = 'PSC'
+        
+    hledany_dotaz = query.replace(" ", "").strip()
 
     # exact match
-    hledane_hodnoty = [query]
-    if query.isdigit() and len(query) < 8:
-        hledane_hodnoty.append(query.zfill(8))
+    hledane_hodnoty = [hledany_dotaz]
+    if hledany_dotaz.isdigit() and len(hledany_dotaz) < 8:
+        hledane_hodnoty.append(hledany_dotaz.zfill(8))
 
     sql_exact = """
         SELECT gl.nazev, i.value, i.type, i.priority, gl.typ, gl.ltree_path 
@@ -630,14 +732,14 @@ def search_id(
         FROM ids i
         JOIN geo_locations gl ON i.location_pk = gl.pk_id
     """
-    query_params = [query]
+    query_params = [hledany_dotaz]
     
     if db_type_filter:
         sql_fuzzy_final += " WHERE i.type = %s "
         query_params.append(db_type_filter)
         
     sql_fuzzy_final += " ORDER BY (i.value <-> %s) ASC, i.priority DESC LIMIT 5;"
-    query_params.append(query)
+    query_params.append(hledany_dotaz)
 
     cursor.execute(sql_fuzzy_final, tuple(query_params))
     vysledky_fuzzy = cursor.fetchall()
