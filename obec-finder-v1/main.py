@@ -432,6 +432,51 @@ def nahrat_psc(cursor):
 
     except FileNotFoundError:
         print("Chyba: Soubor tabulky/zv_cobce_psc-2.csv nenalezen.")
+        
+def nahrat_mesta_obce_cz(cursor):
+    """Nahraje interní ID z portálu mesta.obce.cz a naváže je na uzly pomocí ZUJ (LAU2/MOMC)"""
+    print("Kontroluji data z mesta.obce.cz...")
+    cursor.execute("SELECT count(*) FROM ids WHERE type='MESTA_OBCE';")
+    if cursor.fetchone()[0] > 0:
+        return
+
+    # Obce (LAU2)
+    cursor.execute("SELECT value, location_pk FROM ids WHERE type = 'LAU2';")
+    mapa_obce = {row[0].lstrip('0'): row[1] for row in cursor.fetchall()}
+
+    # Městské části (MOMC)
+    cursor.execute("SELECT value, location_pk FROM ids WHERE type = 'MOMC';")
+    mapa_mc = {row[0].lstrip('0'): row[1] for row in cursor.fetchall()}
+
+    vlozeno = 0
+    try:
+        with open('tabulky/mesta_obce_id.csv', 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f, delimiter=';')
+            
+            for row in reader:
+                zuj = row.get('zuj', '').strip().lstrip('0')
+                id_webu = row.get('id_mesta_obce', '').strip()
+                
+                if not zuj or not id_webu: continue
+                
+                target_pk = None
+                
+                if zuj in mapa_obce:
+                    target_pk = mapa_obce[zuj]
+                elif zuj in mapa_mc:
+                    target_pk = mapa_mc[zuj]
+                    
+                if target_pk:
+                    # Priorita 40 (nižší než státní registry)
+                    cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'MESTA_OBCE', 40);", (target_pk, id_webu))
+                    vlozeno += 1
+                    
+        print(f"\n--- REPORT: Mesta.obce.cz ---")
+        print(f"Úspěšně spárováno a zavěšeno IDs: {vlozeno}")
+        print("-----------------------------\n")
+            
+    except FileNotFoundError:
+        print("Chyba: Soubor tabulky/mesta_obce_id.csv nenalezen.")
 
 def get_db_connection():
     return psycopg2.connect(
@@ -553,6 +598,7 @@ def startup_db():
     nahrat_mestske_casti(cursor) 
     nahrat_casti_obci(cursor)
     nahrat_psc(cursor)
+    nahrat_mesta_obce_cz(cursor)
     
     conn.commit()
     cursor.close()
@@ -654,7 +700,7 @@ def delete_location(identifier_value: str):
 @app.get("/search/{query}")
 def search_id(
     query: str, 
-    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc)$")):
+    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc|mesta_obce)$")):
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -671,6 +717,7 @@ def search_id(
         elif search_type == 'momc': db_type_filter = 'MOMC'
         elif search_type == 'kod_cobce': db_type_filter = 'KOD_COBCE'
         elif search_type == 'psc': db_type_filter = 'PSC'
+        elif search_type == 'mesta_obce': db_type_filter = 'MESTA_OBCE'
         
     hledany_dotaz = query.replace(" ", "").strip()
 

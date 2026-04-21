@@ -22,7 +22,7 @@ def stahni_q_kody():
         data = odpoved.json()
         vysledky = data['results']['bindings']
         
-        with open('wikidata_obce.csv', 'w', newline='', encoding='utf-8') as f:
+        with open('../tabulky/wikidata_obce.csv', 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(['qcode', 'lau2', 'geonames'])
             

@@ -1,0 +1,21 @@
+Záznamy (19), které nemají svůj profil na portálu mesta.obce.cz:
+--------------------------------------------------------------------------------
+ZUJ: 502316 | Uzel: Ústí nad Labem-Střekov
+ZUJ: 555096 | Uzel: Pardubice IV
+ZUJ: 555118 | Uzel: Pardubice VII
+ZUJ: 555126 | Uzel: Pardubice II
+ZUJ: 555321 | Uzel: Opava (nečleněná část města)
+ZUJ: 555339 | Uzel: Malé Hoštice
+ZUJ: 555355 | Uzel: Komárov
+ZUJ: 555371 | Uzel: Suché Lazce
+ZUJ: 555401 | Uzel: Podvihov
+ZUJ: 555410 | Uzel: Zlatníky
+ZUJ: 555436 | Uzel: Milostovice
+ZUJ: 555461 | Uzel: Vlaštovičky
+ZUJ: 556700 | Uzel: Vávrovice
+ZUJ: 556904 | Uzel: Liberec (nečleněné město)
+ZUJ: 557064 | Uzel: Pardubice III
+ZUJ: 557072 | Uzel: Pardubice V
+ZUJ: 567892 | Uzel: Ústí nad Labem-město
+ZUJ: 574716 | Uzel: Pardubice I
+ZUJ: 575020 | Uzel: Pardubice VIII
