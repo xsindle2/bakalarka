@@ -1,0 +1,48 @@
+1.  Overview toho co jsem zatím udělal:
+
+    a.  Architektura a datový model (PostgreSQL + FastAPI)
+
+        Hierarchická struktura: Územní celky jsou v databázi modelovány jako strom
+        (Kraj ➔ Okres ➔ Obec ➔ Část obce / Městská část) pomocí PostgreSQL rozšíření ltree.
+
+        Oddělení logiky: Databáze je rozdělena na tabulku samotných geografických uzlů a tabulku
+        k nim napojených identifikátorů (IDs). Jeden uzel tak může mít nekonečně mnoho různých
+        ID s různými prioritami.
+
+    b. API a vyhledávací algoritmy
+
+        Dva režimy hledání: Implementoval jsem vyhledávání přesných shod (využívá B-tree
+        indexy) a fuzzy vyhledávání pro překlepy a neúplné názvy (využívá GIN indexy a trigramy).
+
+        Filtrování a API endpointy: API umí vyhledávat napříč všemi ID, nebo lze dotaz explicitně
+        omezit parametrem search_type (např. chci hledat jen podle IČO nebo RÚIAN). Výsledky jsou
+        řazeny podle priorit.
+
+        Správa uzlů: Aplikace umožňuje přidávání a mazání uzlů, přičemž se
+        automaticky přepočítávají ltree cesty a kaskádově se mažou přidružená data.
+
+    c. Integrované datové sady a identifikátory
+        
+        Oficiální kódy: ZUJ(LAU2), IČO, RÚIAN (okresy),LAU1 (okresy) NUTS3 (kraje), MOMC (městské
+        části) a kódy částí obcí.
+        Globální registry: Wikipedia Q-kódy a GeoNames ID.
+        PSČ
+        Id z portálu mesta.obce.cz
+
+2.  Co je potreba udelat:
+
+    Přidání volumes do Dockeru, aby se nově přidané obce nesmazaly v případě restartu aplikace.
+    Nastavení priorit výsledku - bude záležet na použití aplikace.
+    Doladění API - více způsobu vyhledávání? Např. typ výsledku, který uživatel chce (obec, okres, ...)
+    Testovani
+
+3.  Nerozumím tomuto: "Dále jsem tě přidal do našeho IDP repa – kouknout na to: jaké IDs se tam používají,
+    zda máme všechno..." Myslíš tím, jestli já mám ve své aplikaci všechny IDs, které vy používáte nebo
+    jestli vy ve své aplikaci máte všechny IDs, které používám já? :)
+
+    Jinak jsem se koukal na projekt, do kterého jsi mě přidal a nemůžu říci že bych se v tom úplně
+    orientoval. Nicméně jsem pochopil že IDs, které se v něm používají jsou tyto:
+
+    Veřejná ID: ico a lau2, ds_legacy_municipality_id a dpdp_legacy_municipality_id
+    + interní ID
+    
