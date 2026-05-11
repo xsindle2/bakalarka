@@ -118,7 +118,7 @@ def nahrat_cis_kody(cursor):
 
     try:
         # CIS0100
-        with open('CIS0100_CS.csv', 'r', encoding='utf-8') as f:
+        with open('tabulky/CIS0100_CS.csv', 'r', encoding='utf-8') as f:
             reader = csv.reader(f)
             next(reader)
             for row in reader:
@@ -132,7 +132,7 @@ def nahrat_cis_kody(cursor):
 
     try:
         # CIS0101 (Okresy - LAU1 a RUIAN)
-        with open('CIS0101_CS.csv', 'r', encoding='utf-8') as f:
+        with open('tabulky/CIS0101_CS.csv', 'r', encoding='utf-8') as f:
             reader = csv.reader(f)
             next(reader)
             for row in reader:
