@@ -1,4 +1,4 @@
-"""Stažení aktuálního číselníku krajů z ČSÚ do tabulky CIS0100_CS.csv."""
+"""Stažení aktuálních číselníků krajů a okresů z ČSÚ."""
 import csv
 import io
 import os
@@ -10,17 +10,22 @@ from zoneinfo import ZoneInfo
 import requests
 
 URL_EXPORTU = "https://apl2.czso.cz/iSMS/do_cis_export"
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/CIS0100_CS.csv"
+CILOVA_SLOZKA = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp"
 HLAVICKA_KRAJU = [
     "kodjaz", "akrcis", "kodcis", "chodnota", "zkrtext", "text",
     "admplod", "admnepo", "cznuts", "kod_ruian", "zkrkraj",
 ]
 
+HLAVICKA_OKRESU = [
+    "kodjaz", "akrcis", "kodcis", "chodnota", "zkrtext", "text",
+    "admplod", "admnepo", "cznuts", "okres_lau", "kraj_1960", "kod_ruian",
+]
 
-def stahni_kraje() -> int:
+
+def stahni_ciselnik(kodcis: str, cilovy_soubor: str, hlavicka: list[str]) -> int:
     """Ověří stažené CSV, uloží ho a vrátí počet řádků."""
     parametry = {
-        "kodcis": "100",       # Číselník krajů
+        "kodcis": kodcis,      # 100 = kraje, 101 = okresy
         "typdat": "0",         # Číselník ne vazba mezi číselníky
         "cisjaz": "203",       # Čeština
         "format": "2",         # CSV
@@ -31,24 +36,24 @@ def stahni_kraje() -> int:
         obsah = odpoved.content
 
     reader = csv.reader(io.StringIO(obsah.decode("utf-8"), newline=""), strict=True)
-    if next(reader, None) != HLAVICKA_KRAJU:
-        raise ValueError("ČSÚ vrátilo neočekávanou hlavičku číselníku krajů.")
+    if next(reader, None) != hlavicka:
+        raise ValueError(f"ČSÚ vrátilo neočekávanou hlavičku číselníku {kodcis}.")
 
     pocet_radku = 0
     for radek in reader:
-        if len(radek) != len(HLAVICKA_KRAJU) or not any(hodnota.strip() for hodnota in radek):
-            raise ValueError("Číselník krajů obsahuje neplatný řádek.")
+        if len(radek) != len(hlavicka) or not any(hodnota.strip() for hodnota in radek):
+            raise ValueError(f"Číselník {kodcis} obsahuje neplatný řádek.")
         pocet_radku += 1
     if pocet_radku == 0:
-        raise ValueError("Číselník krajů neobsahuje žádná data.")
+        raise ValueError(f"Číselník {kodcis} neobsahuje žádná data.")
 
     # Atomicka vymena dat stareho a noveho souboru
     docasna_cesta: Optional[str] = None
     try:
-        with tempfile.NamedTemporaryFile(dir=os.path.dirname(CILOVY_SOUBOR) or ".", delete=False) as soubor:
+        with tempfile.NamedTemporaryFile(dir=os.path.dirname(cilovy_soubor) or ".", delete=False) as soubor:
             docasna_cesta = soubor.name
             soubor.write(obsah)
-        os.replace(docasna_cesta, CILOVY_SOUBOR)
+        os.replace(docasna_cesta, cilovy_soubor)
         docasna_cesta = None
     finally:
         if docasna_cesta is not None:
@@ -58,9 +63,15 @@ def stahni_kraje() -> int:
 
 
 if __name__ == "__main__":
+    ciselniky = [
+        ("100", "CIS0100_CS.csv", HLAVICKA_KRAJU),
+        ("101", "CIS0101_CS.csv", HLAVICKA_OKRESU),
+    ]
     try:
-        pocet = stahni_kraje()
+        for kodcis, nazev_souboru, hlavicka in ciselniky:
+            cilovy_soubor = os.path.join(CILOVA_SLOZKA, nazev_souboru)
+            pocet = stahni_ciselnik(kodcis, cilovy_soubor, hlavicka)
+            print(f"Uloženo {pocet} záznamů do {cilovy_soubor}.")
     except Exception as chyba:
-        print(f"Stažení krajů selhalo: {chyba}")
+        print(f"Stažení číselníků selhalo: {chyba}")
         raise SystemExit(1)
-    print(f"Uloženo {pocet} záznamů do {CILOVY_SOUBOR}.")
