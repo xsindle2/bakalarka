@@ -63,3 +63,20 @@ Rozhraní se ještě mění, proto není tento seznam ani API kontrakt definitiv
   starší prototypy a experimenty.
 
 Projekt vzniká jako bakalářská práce a bude se v průběhu vývoje dále měnit.
+
+## Stažení číselníku krajů ČSÚ
+
+První krok automatizace aktualizuje pouze `CIS0100_CS.csv` z oficiálního
+exportu ČSÚ iSMS, platného k datu spuštění:
+
+```bash
+python -m pip install -r obec-finder-v1/requirements.txt
+python obec-finder-v1/pomocne-scripty/stahni_csu.py
+```
+
+Cílová cesta se nastavuje konstantou `SOUBOR_KRAJU` v kódu; výchozí hodnota
+se odvozuje od umístění skriptu. Cílová složka musí existovat. Před nahrazením souboru se
+ověří hlavička, počet sloupců a neprázdnost dat; při chybě stažení nebo
+kontroly původní CSV zůstane zachované. Chyba ukončí skript s kódem `1`.
+Aktualizace CSV nemění již naplněnou databázi. Další tabulky a zdroje budou
+přidávány postupně.

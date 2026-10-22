@@ -114,7 +114,7 @@ def nahrat_cis_kody(cursor):
     db_uzly = { (typ, nazev.replace(" - ", "-").strip()): pk_id for typ, nazev, pk_id in cursor.fetchall() }
 
     if ('OKRES', 'Hlavní město Praha') in db_uzly:
-        db_uzly[('OKRES', 'Praha')] = db_uzly[('OKRES', 'Hlavní město Praha')]
+        db_uzly[('OKRES', 'Praha')] = db_uzly[('OKRES', 'Hlavní město Praha')] # zvazit pop puvodniho klice v db_uzly
 
     try:
         # CIS0100
