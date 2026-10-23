@@ -21,7 +21,7 @@ def vytvor_slovnik_zuj():
         
     # Načtení Městských částí
     try:
-        with open('../tabulky/VAZ0044_0043_CS-2.csv', 'r', encoding='utf-8') as f:
+        with open('../tabulky/VAZ0044_0043_CS.csv', 'r', encoding='utf-8') as f:
             reader = csv.reader(f)
             next(reader)
             for row in reader:

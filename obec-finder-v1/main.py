@@ -241,7 +241,7 @@ def nahrat_mestske_casti(cursor):
     vlozeno = 0
     try:
         # Soubor s vazbami MOMC -> LAU2
-        with open('tabulky/VAZ0044_0043_CS-2.csv', 'r', encoding='utf-8') as f:
+        with open('tabulky/VAZ0044_0043_CS.csv', 'r', encoding='utf-8') as f:
             reader = csv.reader(f)
             next(reader)
             
@@ -275,7 +275,7 @@ def nahrat_mestske_casti(cursor):
                     
         print(f"Městské části úspěšně nahrány. Zavěšeno {vlozeno} uzlů do stromu.")
     except FileNotFoundError:
-        print("Chyba: Soubor tabulky/VAZ0044_0043_CS-2.csv nenalezen.")
+        print("Chyba: Soubor tabulky/VAZ0044_0043_CS.csv nenalezen.")
         
 def nahrat_casti_obci(cursor):
     """Nahraje části obcí z vazebního souboru (např. VAZ0060_0043_CS)"""
@@ -358,7 +358,7 @@ def nahrat_psc(cursor):
     nenalezene_zaznamy = []
 
     try:
-        with open('tabulky/zv_cobce_psc-2.csv', 'r', encoding='windows-1250') as f:
+        with open('tabulky/zv_cobce_psc.csv', 'r', encoding='windows-1250') as f:
             reader = csv.DictReader(f, delimiter=';')
             
             for row in reader:
@@ -431,7 +431,7 @@ def nahrat_psc(cursor):
         print("-------------------------------\n")
 
     except FileNotFoundError:
-        print("Chyba: Soubor tabulky/zv_cobce_psc-2.csv nenalezen.")
+        print("Chyba: Soubor tabulky/zv_cobce_psc.csv nenalezen.")
         
 def nahrat_mesta_obce_cz(cursor):
     """Nahraje interní ID z portálu mesta.obce.cz a naváže je na uzly pomocí ZUJ (LAU2/MOMC)"""
