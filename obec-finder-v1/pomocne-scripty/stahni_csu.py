@@ -1,4 +1,4 @@
-"""Stažení číselníků krajů a okresů a vazby obcí na okresy z ČSÚ."""
+"""Stažení číselníků a územních vazeb z ČSÚ."""
 import csv
 import io
 import os
@@ -32,7 +32,7 @@ def stahni_tabulku(
 ) -> int:
     """Ověří stažené CSV, uloží ho a vrátí počet řádků."""
     parametry = {
-        "kodcis": kodcis,      # 100 = kraje, 101 = okresy, 43 = obce
+        "kodcis": kodcis,      # 100 = kraje, 101 = okresy, 43 = obce, 42 = části obcí, 44 = městské části
         "typdat": "1" if cisvaz else "0",  # 0 = číselník, 1 = vazba
         "cisjaz": "203",       # Čeština
         "format": "2",         # CSV
@@ -77,6 +77,8 @@ if __name__ == "__main__":
         ("100", "CIS0100_CS.csv", HLAVICKA_KRAJU, None),
         ("101", "CIS0101_CS.csv", HLAVICKA_OKRESU, None),
         ("43", "VAZ0043_0101_CS.csv", HLAVICKA_VAZBY, "101_333"),
+        ("42", "VAZ0042_0043_CS.csv", HLAVICKA_VAZBY, "43_1218"),
+        ("44", "VAZ0044_0043_CS.csv", HLAVICKA_VAZBY, "43_35"),
     ]
     try:
         for kodcis, nazev_souboru, hlavicka, cisvaz in tabulky:
