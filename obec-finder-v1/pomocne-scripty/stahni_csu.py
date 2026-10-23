@@ -1,4 +1,4 @@
-"""Stažení aktuálních číselníků krajů a okresů z ČSÚ."""
+"""Stažení aktuálních číselníků krajů, okresů a obcí z ČSÚ."""
 import csv
 import io
 import os
@@ -21,11 +21,17 @@ HLAVICKA_OKRESU = [
     "admplod", "admnepo", "cznuts", "okres_lau", "kraj_1960", "kod_ruian",
 ]
 
+HLAVICKA_OBCI = [
+    "kodjaz", "akrcis", "kodcis", "chodnota", "zkrtext", "text",
+    "admplod", "admnepo", "obec_ul", "ob_ul_cor", "sm_rozsah", "sm_typ",
+    "kodobce_h", "domin_cobc", "porcobec_o",
+]
+
 
 def stahni_ciselnik(kodcis: str, cilovy_soubor: str, hlavicka: list[str]) -> int:
     """Ověří stažené CSV, uloží ho a vrátí počet řádků."""
     parametry = {
-        "kodcis": kodcis,      # 100 = kraje, 101 = okresy
+        "kodcis": kodcis,      # 100 = kraje, 101 = okresy, 43 = obce
         "typdat": "0",         # Číselník ne vazba mezi číselníky
         "cisjaz": "203",       # Čeština
         "format": "2",         # CSV
@@ -66,6 +72,7 @@ if __name__ == "__main__":
     ciselniky = [
         ("100", "CIS0100_CS.csv", HLAVICKA_KRAJU),
         ("101", "CIS0101_CS.csv", HLAVICKA_OKRESU),
+        ("43", "CIS0043_CS.csv", HLAVICKA_OBCI),
     ]
     try:
         for kodcis, nazev_souboru, hlavicka in ciselniky:
