@@ -1,0 +1,20 @@
+Pro tyto kódy ZÚJ nebyl nalezen odpovídající profil (19):
+ZÚJ: 502316 | Uzel: Ústí nad Labem-Střekov
+ZÚJ: 555096 | Uzel: Pardubice IV
+ZÚJ: 555118 | Uzel: Pardubice VII
+ZÚJ: 555126 | Uzel: Pardubice II
+ZÚJ: 555321 | Uzel: Opava (nečleněná část města)
+ZÚJ: 555339 | Uzel: Malé Hoštice
+ZÚJ: 555355 | Uzel: Komárov
+ZÚJ: 555371 | Uzel: Suché Lazce
+ZÚJ: 555401 | Uzel: Podvihov
+ZÚJ: 555410 | Uzel: Zlatníky
+ZÚJ: 555436 | Uzel: Milostovice
+ZÚJ: 555461 | Uzel: Vlaštovičky
+ZÚJ: 556700 | Uzel: Vávrovice
+ZÚJ: 556904 | Uzel: Liberec (nečleněné město)
+ZÚJ: 557064 | Uzel: Pardubice III
+ZÚJ: 557072 | Uzel: Pardubice V
+ZÚJ: 567892 | Uzel: Ústí nad Labem-město
+ZÚJ: 574716 | Uzel: Pardubice I
+ZÚJ: 575020 | Uzel: Pardubice VIII

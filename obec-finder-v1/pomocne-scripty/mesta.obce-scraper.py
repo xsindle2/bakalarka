@@ -1,93 +1,116 @@
-import csv
-import requests
-import time
-import re
+"""Stažení interních ID portálu mesta.obce.cz podle kódů ZÚJ.
 
-def vytvor_slovnik_zuj():
-    """Načte ZUJ kódy a jejich názvy."""
+ID se čte z přesměrování - samotné profily úřadů se nestahují.
+"""
+import csv
+import os
+import re
+import tempfile
+import time
+from typing import Optional
+
+import requests
+
+URL_VYHLEDAVANI = "https://mesta.obce.cz/vyhledat.asp"
+VSTUPNI_SOUBORY = [
+    "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/VAZ0043_0101_CS.csv",
+    "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/VAZ0044_0043_CS.csv",
+]
+CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/mesta_obce_id.csv"
+SOUBOR_LOGU = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/chybejici_mesta_obce.txt"
+PAUZA = 0.15
+
+
+def vytvor_slovnik_zuj() -> dict[str, str]:
+    """Načte kódy a názvy obcí a městských částí z obou tabulek ČSÚ."""
     zuj_dict = {}
-    print("Načítám naše ZUJ kódy a názvy (LAU2 a MOMC)...")
-    
-    # Načtení Obcí
-    try:
-        with open('../tabulky/VAZ0043_0101_CS.csv', 'r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            next(reader)
-            for row in reader:
-                zuj = row[4].lstrip('0')
-                nazev = row[5].strip()
+    for cesta in VSTUPNI_SOUBORY:
+        with open(cesta, encoding="utf-8-sig", newline="") as soubor:
+            reader = csv.DictReader(soubor)
+            for radek in reader:
+                zuj = radek["chodnota1"]
+                nazev = radek["text1"].strip()
                 zuj_dict[zuj] = nazev
-    except Exception as e: print("Chyba čtení VAZ0043:", e)
-        
-    # Načtení Městských částí
-    try:
-        with open('../tabulky/VAZ0044_0043_CS.csv', 'r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            next(reader)
-            for row in reader:
-                zuj = row[4].lstrip('0')
-                nazev = row[5].strip()
-                zuj_dict[zuj] = nazev
-    except Exception as e: print("Chyba čtení VAZ0044:", e)
-        
     return zuj_dict
 
-def stahni_ids():
+
+def stahni_ids() -> int:
+    """Stáhne vazby, uloží CSV a log nenalezených kódů a vrátí počet vazeb."""
+    zacatek = time.monotonic()
     zuj_map = vytvor_slovnik_zuj()
-    print(f"Nalezeno {len(zuj_map)} unikátních uzlů k prověření.")
-    print("Začínám stahovat IDs... (trva asi 1,5h)")
-    
+    print(f"Začínám hledat profily. Počet kódů ZÚJ: {len(zuj_map)}.", flush=True)
     vysledky = []
-    chybejici_log = []
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0'
-    }
-    
-    zpracovano = 0
-    for zuj, nazev in zuj_map.items():
-        zpracovano += 1
-        url = f"https://mesta.obce.cz/vyhledat.asp?zuj={zuj}"
-        uspech = False
-        
-        try:
-            response = requests.get(url, headers=headers, allow_redirects=True, timeout=10)
-            shoda = re.search(r'vyhledat-([0-9]+)\.htm', response.url, re.IGNORECASE)
+    nenalezene = []
+
+    with requests.Session() as session:
+        session.headers.update({"User-Agent": "MuniParser/1.0 (Bakalarska_prace)"})
+        zpracovano = 0
+        for zuj, nazev in zuj_map.items():
+            zpracovano += 1
+            try:
+                with session.get(
+                    URL_VYHLEDAVANI, params={"zuj": zuj},
+                    allow_redirects=False, timeout=(10, 20),
+                ) as odpoved:
+                    odpoved.raise_for_status()
+                    if odpoved.status_code in (301, 302, 303, 307, 308):
+                        cesta = odpoved.headers.get("Location", "")
+                        shoda = re.fullmatch(r"/zsu/vyhledat-([0-9]+)\.htm", cesta, re.IGNORECASE)
+                        if not shoda:
+                            raise ValueError(f"Neočekávané přesměrování pro ZÚJ {zuj}: {cesta}")
+                        vysledky.append([zuj, shoda.group(1)])
+                    else:
+                        odpoved.encoding = "windows-1250"
+                        if odpoved.status_code != 200 or "Nenalezeno" not in odpoved.text:
+                            raise ValueError(f"Neočekávaná odpověď při hledání ZÚJ {zuj}.")
+                        nenalezene.append(f"ZÚJ: {zuj} | Uzel: {nazev}")
+            except requests.RequestException as chyba:
+                raise RuntimeError(f"Stažení ZÚJ {zuj} ({nazev}) selhalo: {chyba}") from chyba
+
+            if zpracovano % 100 == 0 or zpracovano == len(zuj_map):
+                print(
+                    f"Zpracováno {zpracovano}/{len(zuj_map)}. "
+                    f"Nalezeno: {len(vysledky)}, nenalezeno: {len(nenalezene)}. "
+                    f"Čas: {(time.monotonic() - zacatek) / 60:.1f} min.",
+                    flush=True,
+                )
+            if zpracovano < len(zuj_map):
+                time.sleep(PAUZA)
+
+    if not vysledky:
+        raise ValueError("Nebyl nalezen žádný profil. Původní CSV se nepřepíše.")
+
+    docasna_cesta: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="",
+            dir=os.path.dirname(CILOVY_SOUBOR) or ".", delete=False,
+        ) as soubor:
+            docasna_cesta = soubor.name
+            writer = csv.writer(soubor, delimiter=";")
+            writer.writerow(["zuj", "id_mesta_obce"])
+            writer.writerows(vysledky)
             
-            if shoda:
-                id_webu = shoda.group(1)
-                vysledky.append([zuj, id_webu])
-                uspech = True
-                
-        except Exception as e:
-            pass # timeouty a pády spojení vyřešíme tím, že uspech zůstane False
-        
-        # není ID v adrese, nebo spadlo spojení
-        if not uspech:
-            chybejici_log.append(f"ZUJ: {zuj.zfill(6)} | Uzel: {nazev}")
-        
-        time.sleep(0.15)
-        
-        if zpracovano % 100 == 0:
-            print(f" Zpracováno {zpracovano} z {len(zuj_map)}. Získáno: {len(vysledky)} | Nenalezeno: {len(chybejici_log)}")
+        # Zápis logu nenalezených kódů
+        with open(SOUBOR_LOGU, "w", encoding="utf-8") as soubor:
+            soubor.write(f"Pro tyto kódy ZÚJ nebyl nalezen odpovídající profil ({len(nenalezene)}):\n")
+            for zaznam in nenalezene:
+                soubor.write(zaznam + "\n")
+        os.replace(docasna_cesta, CILOVY_SOUBOR)
+        docasna_cesta = None
+    finally:
+        if docasna_cesta is not None:
+            os.remove(docasna_cesta)
 
-    # ÚSPĚŠNE DATA (CSV)
-    with open('../tabulky/mesta_obce_id.csv', 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f, delimiter=';')
-        writer.writerow(['zuj', 'id_mesta_obce'])
-        writer.writerows(vysledky)
-        
-    # CHYBOVÉHO LOG
-    if chybejici_log:
-        with open('chybejici_mesta_obce.txt', 'w', encoding='utf-8') as f_log:
-            f_log.write(f"Záznamy ({len(chybejici_log)}), které nemají svůj profil na mesta.obce.cz:\n")
-            f_log.write("-" * 80 + "\n")
-            for chyba in chybejici_log:
-                f_log.write(chyba + "\n")
+    print(f"Uloženo {len(vysledky)} vazeb do {CILOVY_SOUBOR}.")
+    print(f"Nenalezené kódy: {SOUBOR_LOGU}")
+    print(f"Celkový čas: {(time.monotonic() - zacatek) / 60:.1f} min.")
+    return len(vysledky)
 
-    print("\n--- REPORT ---")
-    print(f"Úspěšně získáno a uloženo do CSV: {len(vysledky)} IDs.")
-    print(f"Nepodařilo se nalézt: {len(chybejici_log)} uzlů (seznam uložen do 'chybejici_mesta_obce.txt').")
 
 if __name__ == "__main__":
-    stahni_ids()
+    try:
+        stahni_ids()
+    except Exception as chyba:
+        print(f"Stažení ID z mesta.obce.cz selhalo: {chyba}")
+        raise SystemExit(1)
