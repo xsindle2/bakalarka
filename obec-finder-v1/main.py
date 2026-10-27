@@ -58,8 +58,8 @@ def normalizovat_okres(okres_str):
 
 
 # --- PARSOVACÍ FUNKCE ---
-def nahrat_ico(cursor):
-    """Nahrání IČO pomocí složeného klíče (Název obce + Název okresu)"""
+def nahrat_ico(cursor: psycopg2.extensions.cursor) -> None:
+    """Nahraje IČO obcí propojením kódu obce s existujícím LAU2."""
     print("Kontroluji IČO data...")
     
     cursor.execute("SELECT count(*) FROM ids WHERE type='ICO';")
@@ -68,38 +68,33 @@ def nahrat_ico(cursor):
         return
 
     cursor.execute("""
-        SELECT o.nazev, ok.nazev, o.pk_id 
-        FROM geo_locations o 
-        JOIN geo_locations ok ON o.parent_id = ok.pk_id 
-        WHERE o.typ = 'OBEC' AND ok.typ = 'OKRES';
+        SELECT i.value, i.location_pk
+        FROM ids i
+        JOIN geo_locations o ON o.pk_id = i.location_pk
+        WHERE i.type = 'LAU2' AND o.typ = 'OBEC';
     """)
-    obce_mapa = {(row[0].lower(), row[1].lower()): row[2] for row in cursor.fetchall()}
+    obce_mapa = {kod_obce: pk_id for kod_obce, pk_id in cursor.fetchall()}
         
     vlozeno = 0
+    nenalezeno = 0
     try:
-        with open('tabulky/uzemni-samosprava_obce_30-11-2025.csv', 'r', encoding='utf-8') as f:
-            reader = csv.reader(f, delimiter=';')
-            next(reader)
+        with open('tabulky/ico_obce.csv', encoding='utf-8', newline='') as f:
+            reader = csv.DictReader(f, delimiter=';')
             
             for row in reader:
-                ico = row[0].zfill(8)
-                nazev_obce = vycistit_nazev(row[1]).lower()
-                nazev_okresu = normalizovat_okres(row[2]).lower()
+                ico = row['ico'].strip()
+                kod_obce = row['kod_obce'].strip()
+                pk_id = obce_mapa.get(kod_obce)
                 
-                # Praha
-                if "hlavní město praha" in nazev_okresu:
-                    nazev_okresu = "praha"
-
-                # Hledáni podle jmena a okresu
-                pk_id = obce_mapa.get((nazev_obce, nazev_okresu))
-                
-                if pk_id:
+                if pk_id is not None:
                     cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'ICO', 80);", (pk_id, ico))
                     vlozeno += 1
+                else:
+                    nenalezeno += 1
                     
-        print(f"IČO úspěšně nahráno a jmenovci vyřešeni. Spárováno: {vlozeno}")
+        print(f"IČO obcí spárováno přes LAU2: {vlozeno}. Nenalezené kódy obcí: {nenalezeno}.")
     except FileNotFoundError:
-        pass
+        print("Soubor tabulky/ico_obce.csv nenalezen. Import IČO obcí přeskakuji.")
 
 def nahrat_cis_kody(cursor):
     """Přečte CIS soubory a nalepí IDs na Kraje a Okresy"""

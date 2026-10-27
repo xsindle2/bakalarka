@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 URL_EXPORTU = "https://monitor.statnipokladna.gov.cz/api/ciselniky/7/data"
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/ico_obce.csv"
+CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/ico_obce.csv"
 
 
 def stahni_ico() -> int:

@@ -16,8 +16,8 @@ VSTUPNI_SOUBORY = [
     "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/VAZ0043_0101_CS.csv",
     "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/VAZ0044_0043_CS.csv",
 ]
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/mesta_obce_id.csv"
-SOUBOR_LOGU = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/chybejici_mesta_obce.txt"
+CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/mesta_obce_id.csv"
+SOUBOR_LOGU = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/chybejici_mesta_obce.txt"
 PAUZA = 0.15
 
 

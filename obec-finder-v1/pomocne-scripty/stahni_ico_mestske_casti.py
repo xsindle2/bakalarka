@@ -7,7 +7,7 @@ from typing import Optional
 import requests
 
 URL_ARES = "https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/"
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/ico_mestske_casti.csv"
+CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/ico_mestske_casti.csv"
 
 
 def stahni_ico_mestske_casti() -> int:

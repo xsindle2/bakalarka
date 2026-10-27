@@ -7,7 +7,7 @@ from typing import Optional
 import requests
 
 URL_EXPORTU = "https://query.wikidata.org/sparql"
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/wikidata_obce.csv"
+CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/wikidata_obce.csv"
 DOTAZ = """
 SELECT ?item ?lau2 ?geonames WHERE {
   ?item wdt:P7606 ?lau2.

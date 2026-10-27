@@ -9,7 +9,7 @@ from typing import Optional
 import requests
 
 URL_EXPORTU = "https://www.ceskaposta.cz/documents/d/guest/csv_cobce_psc-zip?download=true"
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp/zv_cobce_psc.csv"
+CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/zv_cobce_psc.csv"
 HLAVICKA_PSC = [
     "kodcobce", "nazcobce", "psc", "kodobce", "nazobce", "kodokresu",
     "nazokresu", "kodkraj", "nazevkraj", "kodmomc", "nazmomc",

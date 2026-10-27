@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 URL_EXPORTU = "https://apl2.czso.cz/iSMS/do_cis_export"
-CILOVA_SLOZKA = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky_temp"
+CILOVA_SLOZKA = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky"
 HLAVICKA_KRAJU = [
     "kodjaz", "akrcis", "kodcis", "chodnota", "zkrtext", "text",
     "admplod", "admnepo", "cznuts", "kod_ruian", "zkrkraj",
