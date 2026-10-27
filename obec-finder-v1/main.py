@@ -62,9 +62,13 @@ def nahrat_ico(cursor: psycopg2.extensions.cursor) -> None:
     """Nahraje IČO obcí propojením kódu obce s existujícím LAU2."""
     print("Kontroluji IČO data...")
     
-    cursor.execute("SELECT count(*) FROM ids WHERE type='ICO';")
+    cursor.execute("""
+        SELECT count(*) FROM ids i
+        JOIN geo_locations o ON o.pk_id = i.location_pk
+        WHERE i.type = 'ICO' AND o.typ = 'OBEC';
+    """)
     if cursor.fetchone()[0] > 0:
-        print("IČO data už v databázi jsou")
+        print("IČO obcí už v databázi jsou")
         return
 
     cursor.execute("""
@@ -95,6 +99,47 @@ def nahrat_ico(cursor: psycopg2.extensions.cursor) -> None:
         print(f"IČO obcí spárováno přes LAU2: {vlozeno}. Nenalezené kódy obcí: {nenalezeno}.")
     except FileNotFoundError:
         print("Soubor tabulky/ico_obce.csv nenalezen. Import IČO obcí přeskakuji.")
+
+def nahrat_ico_mestske_casti(cursor: psycopg2.extensions.cursor) -> None:
+    """Nahraje IČO shodou názvu městské části Prahy."""
+    print("Kontroluji IČO pražských městských částí...")
+
+    cursor.execute("""
+        SELECT count(*) FROM ids ico
+        JOIN geo_locations mc ON mc.pk_id = ico.location_pk
+        WHERE ico.type = 'ICO' AND mc.typ = 'MESTSKA_CAST';
+    """)
+    if cursor.fetchone()[0] > 0:
+        print("IČO pražských městských částí už v databázi jsou")
+        return
+
+# v budoucnu mozna omezit query jen na Prahu?
+    cursor.execute("""
+        SELECT mc.nazev, mc.pk_id
+        FROM geo_locations mc
+        WHERE mc.typ = 'MESTSKA_CAST';
+    """)
+    mapa_mestke_casti = {nazev: pk_id for nazev, pk_id in cursor.fetchall()}
+
+    vlozeno = 0
+    nenalezeno = 0
+    try:
+        with open('tabulky/ico_mestske_casti.csv', encoding='utf-8', newline='') as f:
+            reader = csv.DictReader(f, delimiter=';')
+            for row in reader:
+                ico = row['ico'].strip()
+                nazev = row['nazev'].strip()
+                pk_id = mapa_mestke_casti.get(nazev)
+                if pk_id is not None:
+                    cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'ICO', 80);", (pk_id, ico))
+                    vlozeno += 1
+                else:
+                    nenalezeno += 1
+
+        print(f"IČO pražských městských částí spárováno: {vlozeno}. Nenalezené názvy: {nenalezeno}.")
+    except FileNotFoundError:
+        print("Soubor tabulky/ico_mestske_casti.csv nenalezen. Import IČO pražských městských částí přeskakuji.")
+
 
 def nahrat_cis_kody(cursor):
     """Přečte CIS soubory a nalepí IDs na Kraje a Okresy"""
@@ -591,6 +636,7 @@ def startup_db():
     nahrat_cis_kody(cursor)
     nahrat_wikidata_qcodes(cursor)
     nahrat_mestske_casti(cursor) 
+    nahrat_ico_mestske_casti(cursor)
     nahrat_casti_obci(cursor)
     nahrat_psc(cursor)
     nahrat_mesta_obce_cz(cursor)
