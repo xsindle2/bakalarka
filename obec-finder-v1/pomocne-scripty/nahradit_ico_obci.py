@@ -20,6 +20,7 @@ def nahradit_ico_obci(
 ) -> Dict[str, object]:
     """Připraví párování a nahradí obecní IČO; transakci řídí volající."""
     radky = []
+    chyby = []
     pouzita_ico = set()
     pouzite_kody = set()
     with soubor.open(encoding="utf-8", newline="") as f:
@@ -30,15 +31,19 @@ def nahradit_ico_obci(
             ico = (row.get("ico") or "").strip()
             kod_obce = (row.get("kod_obce") or "").strip()
             if not re.fullmatch(r"[0-9]{8}", ico):
-                raise ValueError(f"Řádek {reader.line_num}: neplatné IČO {ico!r}.")
+                chyby.append({"radek": reader.line_num, "sloupec": "ico",
+                              "hodnota": ico, "duvod": "Neplatné IČO; vynechán celý řádek."})
+                continue
             if not re.fullmatch(r"[0-9]{6}", kod_obce) or kod_obce == "000000":
-                raise ValueError(f"Řádek {reader.line_num}: neplatné LAU2 {kod_obce!r}.")
+                chyby.append({"radek": reader.line_num, "sloupec": "kod_obce",
+                              "hodnota": kod_obce, "duvod": "Neplatné LAU2; vynechán celý řádek."})
+                continue
             if ico in pouzita_ico or kod_obce in pouzite_kody:
                 raise ValueError(f"Duplicitní IČO nebo kód obce: {ico}, {kod_obce}.")
             pouzita_ico.add(ico)
             pouzite_kody.add(kod_obce)
             radky.append({"ico": ico, "kod_obce": kod_obce})
-    if not radky:
+    if not radky and not chyby:
         raise ValueError("Soubor IČO obcí je prázdný.")
 
     # Chybné jméno schématu nesmí vést k použití tabulek z public
@@ -87,9 +92,10 @@ def nahradit_ico_obci(
             VALUES (%s, %s, 'ICO', 80);
         """, (pk, ico))
     return {
-        "schema": schema, "stav": "castecny" if nesparovane else "uplny",
+        "schema": schema, "stav": "castecny" if nesparovane or chyby else "uplny",
         "odstraneno": odstraneno, "vlozeno": len(vazby),
         "nesparovano": len(nesparovane), "nesparovane": nesparovane,
+        "chybnych_hodnot": len(chyby), "chyby": chyby,
     }
 
 
