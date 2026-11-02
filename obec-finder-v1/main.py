@@ -3,6 +3,10 @@ import csv
 import os
 import re
 import psycopg2
+from psycopg2 import sql
+from aktivni_data import (
+    nacist_aktivni_schema, nastavit_aktivni_schema, vytvorit_tabulku_aktivnich_dat,
+)
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List
@@ -529,7 +533,7 @@ def get_db_connection():
 
 # -------------------------------------------
 @app.on_event("startup")
-def startup_db():
+def startup_db() -> None:
     conn = None
     for _ in range(10):
         try:
@@ -537,113 +541,118 @@ def startup_db():
             break
         except psycopg2.OperationalError:
             time.sleep(2)
-    
+
     if not conn: return
-    cursor = conn.cursor()
+    try:
+        with conn:
+            with conn.cursor() as cursor:
+                vytvorit_tabulku_aktivnich_dat(cursor)
+                cursor.execute("SELECT 1 FROM public.aktivni_data WHERE id = 1;")
+                if cursor.fetchone() is not None:
+                    return
+                cursor.execute("SET LOCAL search_path TO public, pg_temp;")
 
-    # ROZŠÍŘENÍ PRO FUZZY SEARCH (Trigrams) A HIERARCHII (ltree)
-    cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
-    cursor.execute("CREATE EXTENSION IF NOT EXISTS ltree;")
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS geo_locations (
-            pk_id SERIAL PRIMARY KEY,
-            parent_id INTEGER REFERENCES geo_locations(pk_id) ON DELETE CASCADE,
-            typ VARCHAR(50) NOT NULL,
-            nazev VARCHAR(255) NOT NULL,
-            ltree_path ltree
-        );
-    """)
+                # ROZŠÍŘENÍ PRO FUZZY SEARCH (Trigrams) A HIERARCHII (ltree)
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS ltree;")
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ids (
-            pk SERIAL PRIMARY KEY,
-            location_pk INTEGER REFERENCES geo_locations(pk_id) ON DELETE CASCADE,
-            value VARCHAR(50) NOT NULL,
-            type VARCHAR(20) NOT NULL,
-            priority INTEGER DEFAULT 0
-        );
-    """)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS geo_locations (
+                        pk_id SERIAL PRIMARY KEY,
+                        parent_id INTEGER REFERENCES geo_locations(pk_id) ON DELETE CASCADE,
+                        typ VARCHAR(50) NOT NULL,
+                        nazev VARCHAR(255) NOT NULL,
+                        ltree_path ltree
+                    );
+                """)
 
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ids_value_btree ON ids (value);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ids_value_gin ON ids USING GIN (value gin_trgm_ops);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS path_gist_idx ON geo_locations USING GIST (ltree_path);")
-    
-    conn.commit()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS ids (
+                        pk SERIAL PRIMARY KEY,
+                        location_pk INTEGER REFERENCES geo_locations(pk_id) ON DELETE CASCADE,
+                        value VARCHAR(50) NOT NULL,
+                        type VARCHAR(20) NOT NULL,
+                        priority INTEGER DEFAULT 0
+                    );
+                """)
 
-    # --- NOVÁ TVORBA STROMU POMOCÍ VAZ0043 A MAPA_KRAJU ---
-    cursor.execute("SELECT count(*) FROM geo_locations;")
-    if cursor.fetchone()[0] == 0:
-        print("Vytvářím stromovou strukturu přímo z VAZ dat a mapy krajů...")
-        
-        # 1. Vložení Krajů
-        kraje_db = {}
-        for kraj_nazev in MAPA_KRAJU.keys():
-            cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (NULL, 'KRAJ', %s) RETURNING pk_id;", (kraj_nazev,))
-            pk_id = cursor.fetchone()[0]
-            cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (str(pk_id), pk_id))
-            kraje_db[kraj_nazev] = pk_id
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ids_value_btree ON ids (value);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ids_value_gin ON ids USING GIN (value gin_trgm_ops);")
+                cursor.execute("CREATE INDEX IF NOT EXISTS path_gist_idx ON geo_locations USING GIST (ltree_path);")
 
-        # 2. Vložení Okresů
-        okresy_db = {}
-        for kraj_nazev, okresy in MAPA_KRAJU.items():
-            parent_kraj_id = kraje_db[kraj_nazev]
-            for okres_nazev in okresy:
-                cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, 'OKRES', %s) RETURNING pk_id;", (parent_kraj_id, okres_nazev))
-                pk_id = cursor.fetchone()[0]
-                ltree = f"{parent_kraj_id}.{pk_id}"
-                cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (ltree, pk_id))
-                okresy_db[okres_nazev.lower()] = pk_id
+                # --- NOVÁ TVORBA STROMU POMOCÍ VAZ0043 A MAPA_KRAJU ---
+                cursor.execute("SELECT count(*) FROM geo_locations;")
+                if cursor.fetchone()[0] == 0:
+                    print("Vytvářím stromovou strukturu přímo z VAZ dat a mapy krajů...")
 
-        # 3. Vložení Obcí z VAZ s přiřazením ZUJ (LAU2) do správného okresu
-        try:
-            with open('tabulky/VAZ0043_0101_CS.csv', 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                next(reader) 
-                
-                vlozeno = 0
-                for row in reader:
-                    # Sloupec 4 je ZUJ, 5 je Obec, 9 je Okres
-                    zuj = row[4]
-                    nazev_obce = vycistit_nazev(row[5])
-                    nazev_okresu = normalizovat_okres(row[9]).lower()
-                    
-                    if "hlavní město praha" in nazev_okresu:
-                        nazev_okresu = "praha"
-                        
-                    parent_okres_id = okresy_db.get(nazev_okresu)
-                    
-                    if parent_okres_id:
-                        # Vloženi obce pod svuj okres
-                        cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, 'OBEC', %s) RETURNING pk_id;", (parent_okres_id, nazev_obce))
-                        obec_pk = cursor.fetchone()[0]
-                        
-                        # Generování cesty ltree
-                        cursor.execute("SELECT ltree_path FROM geo_locations WHERE pk_id = %s;", (parent_okres_id,))
-                        parent_path = cursor.fetchone()[0]
-                        cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (f"{parent_path}.{obec_pk}", obec_pk))
-                        
-                        # pridani LAU2 kódu do ids
-                        cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'LAU2', 100);", (obec_pk, zuj))
-                        vlozeno += 1
-                        
-            print(f"Strom a LAU2 kódy byly úspěšně nahrány pro {vlozeno} obcí.")
-        except FileNotFoundError:
-            pass
+                    # 1. Vložení Krajů
+                    kraje_db = {}
+                    for kraj_nazev in MAPA_KRAJU.keys():
+                        cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (NULL, 'KRAJ', %s) RETURNING pk_id;", (kraj_nazev,))
+                        pk_id = cursor.fetchone()[0]
+                        cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (str(pk_id), pk_id))
+                        kraje_db[kraj_nazev] = pk_id
 
-    # 4. Dodatečné volání doplňkových kódů
-    nahrat_ico(cursor)
-    nahrat_cis_kody(cursor)
-    nahrat_wikidata_qcodes(cursor)
-    nahrat_mestske_casti(cursor) 
-    nahrat_ico_mestske_casti(cursor)
-    nahrat_casti_obci(cursor)
-    nahrat_psc(cursor)
-    nahrat_mesta_obce_cz(cursor)
-    
-    conn.commit()
-    cursor.close()
-    conn.close()
+                    # 2. Vložení Okresů
+                    okresy_db = {}
+                    for kraj_nazev, okresy in MAPA_KRAJU.items():
+                        parent_kraj_id = kraje_db[kraj_nazev]
+                        for okres_nazev in okresy:
+                            cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, 'OKRES', %s) RETURNING pk_id;", (parent_kraj_id, okres_nazev))
+                            pk_id = cursor.fetchone()[0]
+                            ltree = f"{parent_kraj_id}.{pk_id}"
+                            cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (ltree, pk_id))
+                            okresy_db[okres_nazev.lower()] = pk_id
+
+                    # 3. Vložení Obcí z VAZ s přiřazením ZUJ (LAU2) do správného okresu
+                    try:
+                        with open('tabulky/VAZ0043_0101_CS.csv', 'r', encoding='utf-8') as f:
+                            reader = csv.reader(f)
+                            next(reader)
+
+                            vlozeno = 0
+                            for row in reader:
+                                # Sloupec 4 je ZUJ, 5 je Obec, 9 je Okres
+                                zuj = row[4]
+                                nazev_obce = vycistit_nazev(row[5])
+                                nazev_okresu = normalizovat_okres(row[9]).lower()
+
+                                if "hlavní město praha" in nazev_okresu:
+                                    nazev_okresu = "praha"
+
+                                parent_okres_id = okresy_db.get(nazev_okresu)
+
+                                if parent_okres_id:
+                                    # Vloženi obce pod svuj okres
+                                    cursor.execute("INSERT INTO geo_locations (parent_id, typ, nazev) VALUES (%s, 'OBEC', %s) RETURNING pk_id;", (parent_okres_id, nazev_obce))
+                                    obec_pk = cursor.fetchone()[0]
+
+                                    # Generování cesty ltree
+                                    cursor.execute("SELECT ltree_path FROM geo_locations WHERE pk_id = %s;", (parent_okres_id,))
+                                    parent_path = cursor.fetchone()[0]
+                                    cursor.execute("UPDATE geo_locations SET ltree_path = %s WHERE pk_id = %s;", (f"{parent_path}.{obec_pk}", obec_pk))
+
+                                    # pridani LAU2 kódu do ids
+                                    cursor.execute("INSERT INTO ids (location_pk, value, type, priority) VALUES (%s, %s, 'LAU2', 100);", (obec_pk, zuj))
+                                    vlozeno += 1
+
+                        print(f"Strom a LAU2 kódy byly úspěšně nahrány pro {vlozeno} obcí.")
+                    except FileNotFoundError as chyba:
+                        raise RuntimeError("Chybí povinný soubor VAZ0043_0101_CS.csv; počáteční data nelze připravit.") from chyba
+
+                # 4. Dodatečné volání doplňkových kódů
+                nahrat_ico(cursor)
+                nahrat_cis_kody(cursor)
+                nahrat_wikidata_qcodes(cursor)
+                nahrat_mestske_casti(cursor)
+                nahrat_ico_mestske_casti(cursor)
+                nahrat_casti_obci(cursor)
+                nahrat_psc(cursor)
+                nahrat_mesta_obce_cz(cursor)
+
+                nastavit_aktivni_schema(cursor, "public")
+    finally:
+        conn.close()
 
 
 # --- ENDPOINTY PRO PŘIDÁNÍ A SMAZÁNÍ LOKACE ---
@@ -740,133 +749,141 @@ def delete_location(identifier_value: str):
 
 @app.get("/search/{query}")
 def search_id(
-    query: str, 
+    query: str,
     search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc|mesta_obce)$")):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    try:
+        conn.set_session(isolation_level="REPEATABLE READ", readonly=True)
+        with conn:
+            with conn.cursor() as cursor:
+                try:
+                    schema = nacist_aktivni_schema(cursor)
+                except (ValueError, psycopg2.errors.UndefinedTable) as chyba:
+                    raise HTTPException(status_code=503, detail="Aktivní datové schéma není nastavené.") from chyba
+                cursor.execute(
+                    sql.SQL("SET LOCAL search_path TO {schema}, public, pg_temp").format(
+                        schema=sql.Identifier(schema)
+                    )
+                )
 
-    db_type_filter = None
-    if search_type:
-        search_type = search_type.lower()
-        if search_type in ['zuj', 'lau2']: db_type_filter = 'LAU2'
-        elif search_type == 'ico': db_type_filter = 'ICO'
-        elif search_type == 'nuts3': db_type_filter = 'NUTS3'
-        elif search_type == 'lau1': db_type_filter = 'LAU1'
-        elif search_type == 'ruian': db_type_filter = 'RUIAN'
-        elif search_type == 'qcode': db_type_filter = 'QCODE'
-        elif search_type == 'geonames': db_type_filter = 'GEONAMES'
-        elif search_type == 'momc': db_type_filter = 'MOMC'
-        elif search_type == 'kod_cobce': db_type_filter = 'KOD_COBCE'
-        elif search_type == 'psc': db_type_filter = 'PSC'
-        elif search_type == 'mesta_obce': db_type_filter = 'MESTA_OBCE'
-        
-    hledany_dotaz = query.replace(" ", "").strip()
+                db_type_filter = None
+                if search_type:
+                    search_type = search_type.lower()
+                    if search_type in ['zuj', 'lau2']: db_type_filter = 'LAU2'
+                    elif search_type == 'ico': db_type_filter = 'ICO'
+                    elif search_type == 'nuts3': db_type_filter = 'NUTS3'
+                    elif search_type == 'lau1': db_type_filter = 'LAU1'
+                    elif search_type == 'ruian': db_type_filter = 'RUIAN'
+                    elif search_type == 'qcode': db_type_filter = 'QCODE'
+                    elif search_type == 'geonames': db_type_filter = 'GEONAMES'
+                    elif search_type == 'momc': db_type_filter = 'MOMC'
+                    elif search_type == 'kod_cobce': db_type_filter = 'KOD_COBCE'
+                    elif search_type == 'psc': db_type_filter = 'PSC'
+                    elif search_type == 'mesta_obce': db_type_filter = 'MESTA_OBCE'
 
-    # exact match
-    hledane_hodnoty = [hledany_dotaz]
-    if hledany_dotaz.isdigit() and len(hledany_dotaz) < 8:
-        hledane_hodnoty.append(hledany_dotaz.zfill(8))
+                hledany_dotaz = query.replace(" ", "").strip()
 
-    sql_exact = """
-        SELECT gl.nazev, i.value, i.type, i.priority, gl.typ, gl.ltree_path 
-        FROM ids i
-        JOIN geo_locations gl ON i.location_pk = gl.pk_id
-        WHERE i.value = ANY(%s)
-    """
-    params_exact = [hledane_hodnoty]
+                # exact match
+                hledane_hodnoty = [hledany_dotaz]
+                if hledany_dotaz.isdigit() and len(hledany_dotaz) < 8:
+                    hledane_hodnoty.append(hledany_dotaz.zfill(8))
 
-    if db_type_filter:
-        sql_exact += " AND i.type = %s"
-        params_exact.append(db_type_filter)
-    
-    sql_exact += " ORDER BY i.priority DESC;"
+                sql_exact = """
+                    SELECT gl.nazev, i.value, i.type, i.priority, gl.typ, gl.ltree_path
+                    FROM ids i
+                    JOIN geo_locations gl ON i.location_pk = gl.pk_id
+                    WHERE i.value = ANY(%s)
+                """
+                params_exact = [hledane_hodnoty]
 
-    cursor.execute(sql_exact, tuple(params_exact))
-    presne_vysledky = cursor.fetchall()
+                if db_type_filter:
+                    sql_exact += " AND i.type = %s"
+                    params_exact.append(db_type_filter)
 
-    if presne_vysledky:
-        response_data = []
-        for row in presne_vysledky:
-            nazev, kod, typ_kodu, priorita, typ_uzlu, ltree_cesta = row
+                sql_exact += " ORDER BY i.priority DESC;"
 
-            rodice_seznam = []
-            if ltree_cesta:
-                sql_rodice = "SELECT nazev, typ FROM geo_locations WHERE ltree_path @> %s AND ltree_path != %s ORDER BY nlevel(ltree_path) ASC;"
-                cursor.execute(sql_rodice, (ltree_cesta, ltree_cesta))
-                for r in cursor.fetchall():
-                    rodice_seznam.append(f"{r[0]} ({r[1]})")
+                cursor.execute(sql_exact, tuple(params_exact))
+                presne_vysledky = cursor.fetchall()
 
-            response_data.append({
-                "obec": nazev,
-                "kod": kod,
-                "typ": typ_kodu,
-                "typ_uzlu": typ_uzlu,
-                "shoda": "100 %",
-                "cesta": " > ".join(rodice_seznam) if rodice_seznam else "Kořenový uzel"
-            })
+                if presne_vysledky:
+                    response_data = []
+                    for row in presne_vysledky:
+                        nazev, kod, typ_kodu, priorita, typ_uzlu, ltree_cesta = row
 
-        cursor.close()
+                        rodice_seznam = []
+                        if ltree_cesta:
+                            sql_rodice = "SELECT nazev, typ FROM geo_locations WHERE ltree_path @> %s AND ltree_path != %s ORDER BY nlevel(ltree_path) ASC;"
+                            cursor.execute(sql_rodice, (ltree_cesta, ltree_cesta))
+                            for r in cursor.fetchall():
+                                rodice_seznam.append(f"{r[0]} ({r[1]})")
+
+                        response_data.append({
+                            "obec": nazev,
+                            "kod": kod,
+                            "typ": typ_kodu,
+                            "typ_uzlu": typ_uzlu,
+                            "shoda": "100 %",
+                            "cesta": " > ".join(rodice_seznam) if rodice_seznam else "Kořenový uzel"
+                        })
+
+                    return {
+                        "status": "exact_match",
+                        "filter": db_type_filter if db_type_filter else "all",
+                        "count": len(response_data),
+                        "results": response_data
+                    }
+
+                # FUZZY VYHLEDÁVÁNÍ
+                sql_fuzzy_final = """
+                    SELECT gl.nazev, i.value, i.type, (i.value <-> %s) as vzdalenost, gl.typ, gl.ltree_path
+                    FROM ids i
+                    JOIN geo_locations gl ON i.location_pk = gl.pk_id
+                """
+                query_params = [hledany_dotaz]
+
+                if db_type_filter:
+                    sql_fuzzy_final += " WHERE i.type = %s "
+                    query_params.append(db_type_filter)
+
+                sql_fuzzy_final += " ORDER BY (i.value <-> %s) ASC, i.priority DESC LIMIT 5;"
+                query_params.append(hledany_dotaz)
+
+                cursor.execute(sql_fuzzy_final, tuple(query_params))
+                vysledky_fuzzy = cursor.fetchall()
+
+                if not vysledky_fuzzy:
+                    raise HTTPException(status_code=404, detail="Nic nenalezeno.")
+
+                response_data = []
+                for row in vysledky_fuzzy:
+                    nazev, kod, typ_kodu, vzdalenost, typ_uzlu, ltree_cesta = row
+                    shoda_procenta = round((1 - vzdalenost) * 100, 2)
+                    if shoda_procenta < 10: continue
+
+                    rodice_seznam = []
+                    if ltree_cesta:
+                        sql_rodice = "SELECT nazev, typ FROM geo_locations WHERE ltree_path @> %s AND ltree_path != %s ORDER BY nlevel(ltree_path) ASC;"
+                        cursor.execute(sql_rodice, (ltree_cesta, ltree_cesta))
+                        for r in cursor.fetchall():
+                            rodice_seznam.append(f"{r[0]} ({r[1]})")
+
+                    response_data.append({
+                        "obec": nazev,
+                        "kod": kod,
+                        "typ": typ_kodu,
+                        "typ_uzlu": typ_uzlu,
+                        "shoda": f"{shoda_procenta} %",
+                        "cesta": " > ".join(rodice_seznam) if rodice_seznam else "Kořenový uzel"
+                    })
+
+
+                if not response_data:
+                    raise HTTPException(status_code=404, detail="Nic dostatečně podobného nenalezeno.")
+
+                return {
+                    "status": "fuzzy_match",
+                    "filter": db_type_filter if db_type_filter else "all",
+                    "results": response_data
+                }
+    finally:
         conn.close()
-        return {
-            "status": "exact_match",
-            "filter": db_type_filter if db_type_filter else "all",
-            "count": len(response_data),
-            "results": response_data
-        }
-
-    # FUZZY VYHLEDÁVÁNÍ
-    sql_fuzzy_final = """
-        SELECT gl.nazev, i.value, i.type, (i.value <-> %s) as vzdalenost, gl.typ, gl.ltree_path
-        FROM ids i
-        JOIN geo_locations gl ON i.location_pk = gl.pk_id
-    """
-    query_params = [hledany_dotaz]
-    
-    if db_type_filter:
-        sql_fuzzy_final += " WHERE i.type = %s "
-        query_params.append(db_type_filter)
-        
-    sql_fuzzy_final += " ORDER BY (i.value <-> %s) ASC, i.priority DESC LIMIT 5;"
-    query_params.append(hledany_dotaz)
-
-    cursor.execute(sql_fuzzy_final, tuple(query_params))
-    vysledky_fuzzy = cursor.fetchall()
-
-    if not vysledky_fuzzy:
-        cursor.close()
-        conn.close()
-        raise HTTPException(status_code=404, detail="Nic nenalezeno.")
-
-    response_data = []
-    for row in vysledky_fuzzy:
-        nazev, kod, typ_kodu, vzdalenost, typ_uzlu, ltree_cesta = row
-        shoda_procenta = round((1 - vzdalenost) * 100, 2)
-        if shoda_procenta < 10: continue
-
-        rodice_seznam = []
-        if ltree_cesta:
-            sql_rodice = "SELECT nazev, typ FROM geo_locations WHERE ltree_path @> %s AND ltree_path != %s ORDER BY nlevel(ltree_path) ASC;"
-            cursor.execute(sql_rodice, (ltree_cesta, ltree_cesta))
-            for r in cursor.fetchall():
-                rodice_seznam.append(f"{r[0]} ({r[1]})")
-
-        response_data.append({
-            "obec": nazev,
-            "kod": kod,
-            "typ": typ_kodu,
-            "typ_uzlu": typ_uzlu,
-            "shoda": f"{shoda_procenta} %",
-            "cesta": " > ".join(rodice_seznam) if rodice_seznam else "Kořenový uzel"
-        })
-
-    cursor.close()
-    conn.close()
-
-    if not response_data:
-        raise HTTPException(status_code=404, detail="Nic dostatečně podobného nenalezeno.")
-
-    return {
-        "status": "fuzzy_match",
-        "filter": db_type_filter if db_type_filter else "all",
-        "results": response_data
-    }
