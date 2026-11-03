@@ -5,3 +5,5 @@ testy/
 /docs
 /tabulky_temp
 /obec-finder-v1/tabulky_old/
+/obec-finder-v1/tabulky_nove/*.csv
+/obec-finder-v1/tabulky_nove/chybejici_mesta_obce.txt
