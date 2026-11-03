@@ -56,7 +56,7 @@ def stahni_ids() -> int:
                     odpoved.raise_for_status()
                     if odpoved.status_code in (301, 302, 303, 307, 308):
                         cesta = odpoved.headers.get("Location", "").strip()
-                        shoda = re.fullmatch(r"/zsu/vyhledat-([0-9]+)\.htm", cesta, re.IGNORECASE)
+                        shoda = re.fullmatch(r"/zsu/vyhledat-([^/?#]+)\.htm", cesta, re.IGNORECASE)
                         if not shoda:
                             raise ValueError(f"Neočekávané přesměrování pro ZÚJ {zuj}: {cesta}")
                         vysledky.append([zuj, shoda.group(1).lstrip("0")])

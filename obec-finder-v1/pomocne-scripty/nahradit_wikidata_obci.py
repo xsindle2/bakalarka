@@ -27,9 +27,11 @@ def nahradit_wikidata_obci(
             raise ValueError("Soubor musí obsahovat sloupce qcode, lau2 a geonames.")
         for row in reader:
             qcode = (row.get("qcode") or "").strip()
-            lau2 = (row.get("lau2") or "").strip()
-            geonames = (row.get("geonames") or "").strip()
-            if not re.fullmatch(r"[0-9]{6}", lau2) or lau2 == "000000":
+            if qcode.startswith("q"):
+                qcode = "Q" + qcode[1:]
+            lau2 = (row.get("lau2") or "").strip().lstrip("0")
+            geonames = (row.get("geonames") or "").strip().lstrip("0")
+            if not re.fullmatch(r"[0-9]{6}", lau2):
                 chyby.append({"radek": reader.line_num, "sloupec": "lau2",
                               "hodnota": lau2, "duvod": "Neplatné LAU2; vynechán celý řádek."})
                 continue
@@ -37,7 +39,7 @@ def nahradit_wikidata_obci(
                 chyby.append({"radek": reader.line_num, "sloupec": "qcode",
                               "hodnota": qcode, "duvod": "Neplatný Q-kód; vazba vynechána."})
                 qcode = ""
-            if geonames and not re.fullmatch(r"[0-9]+", geonames):
+            if geonames and not re.fullmatch(r"[1-9][0-9]*", geonames):
                 chyby.append({"radek": reader.line_num, "sloupec": "geonames",
                               "hodnota": geonames, "duvod": "Neplatné GeoNames ID; vazba vynechána."})
                 geonames = ""

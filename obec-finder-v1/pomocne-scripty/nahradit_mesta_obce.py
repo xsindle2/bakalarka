@@ -27,9 +27,9 @@ def nahradit_mesta_obce(
         if not {"zuj", "id_mesta_obce"}.issubset(reader.fieldnames or []):
             raise ValueError("Soubor musí obsahovat sloupce zuj a id_mesta_obce.")
         for row in reader:
-            zuj = (row.get("zuj") or "").strip()
-            id_webu = (row.get("id_mesta_obce") or "").strip()
-            if not re.fullmatch(r"[0-9]{1,6}", zuj) or not zuj.lstrip("0"):
+            zuj = (row.get("zuj") or "").strip().lstrip("0")
+            id_webu = (row.get("id_mesta_obce") or "").strip().lstrip("0")
+            if not re.fullmatch(r"[0-9]{6}", zuj):
                 chyby.append({"radek": reader.line_num, "sloupec": "zuj",
                               "hodnota": zuj, "duvod": "Neplatný kód ZÚJ; vynechán celý řádek."})
                 continue
@@ -37,7 +37,7 @@ def nahradit_mesta_obce(
                 chyby.append({"radek": reader.line_num, "sloupec": "id_mesta_obce",
                               "hodnota": id_webu, "duvod": "Prázdné ID webu; vynechán celý řádek."})
                 continue
-            klic = zuj.lstrip("0")
+            klic = zuj
             if klic in pouzite_kody:
                 if pouzite_kody[klic] != id_webu:
                     raise ValueError(f"Více odlišných ID webu pro ZÚJ {zuj}.")
@@ -76,7 +76,7 @@ def nahradit_mesta_obce(
     vazby = []
     nesparovane = []
     for row in radky:
-        uzel = uzly.get(row["zuj"].lstrip("0"))
+        uzel = uzly.get(row["zuj"])
         if uzel is None:
             nesparovane.append(row)
         else:

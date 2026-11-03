@@ -29,12 +29,12 @@ def nahradit_ico_obci(
             raise ValueError("Soubor musí obsahovat sloupce ico a kod_obce.")
         for row in reader:
             ico = (row.get("ico") or "").strip()
-            kod_obce = (row.get("kod_obce") or "").strip()
+            kod_obce = (row.get("kod_obce") or "").strip().lstrip("0")
             if not re.fullmatch(r"[0-9]{8}", ico):
                 chyby.append({"radek": reader.line_num, "sloupec": "ico",
                               "hodnota": ico, "duvod": "Neplatné IČO; vynechán celý řádek."})
                 continue
-            if not re.fullmatch(r"[0-9]{6}", kod_obce) or kod_obce == "000000":
+            if not re.fullmatch(r"[0-9]{6}", kod_obce):
                 chyby.append({"radek": reader.line_num, "sloupec": "kod_obce",
                               "hodnota": kod_obce, "duvod": "Neplatné LAU2; vynechán celý řádek."})
                 continue

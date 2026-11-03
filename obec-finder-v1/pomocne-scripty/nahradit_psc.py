@@ -31,17 +31,18 @@ def nahradit_psc(
         if not {"psc", "kodobce", "kodmomc", "kodcobce"}.issubset(reader.fieldnames or []):
             raise ValueError("Soubor musí obsahovat sloupce psc, kodobce, kodmomc a kodcobce.")
         for row in reader:
-            psc = (row.get("psc") or "").replace(" ", "").strip()
+            psc = (row.get("psc") or "").replace(" ", "").strip().lstrip("0")
             if not re.fullmatch(r"[0-9]{5}", psc):
                 chyby.append({"radek": reader.line_num, "sloupec": "psc",
                               "hodnota": psc, "duvod": "Neplatné PSČ; vynechán celý řádek."})
                 continue
             zaznam = {"radek": reader.line_num, "psc": psc}
             for sloupec, _, _, _ in typy:
-                kod = (row.get(sloupec) or "").strip()
+                kod = (row.get(sloupec) or "").strip().lstrip("0")
+                vzor = r"[0-9]{1,6}" if sloupec == "kodcobce" else r"[0-9]{6}"
                 if not kod and sloupec != "kodobce":
                     zaznam[sloupec] = ""
-                elif not re.fullmatch(r"[0-9]{1,6}", kod) or not kod.lstrip("0"):
+                elif not re.fullmatch(vzor, kod):
                     chyby.append({"radek": reader.line_num, "sloupec": sloupec,
                                   "hodnota": kod, "duvod": "Neplatný územní kód; vazba vynechána."})
                     zaznam[sloupec] = ""
@@ -87,7 +88,7 @@ def nahradit_psc(
             kod = row[sloupec]
             if not kod:
                 continue
-            pk = mapy[sloupec].get(kod.lstrip("0"))
+            pk = mapy[sloupec].get(kod)
             if pk is None:
                 nesparovane.append({"radek": row["radek"], "sloupec": sloupec,
                                     "hodnota": kod, "psc": row["psc"]})

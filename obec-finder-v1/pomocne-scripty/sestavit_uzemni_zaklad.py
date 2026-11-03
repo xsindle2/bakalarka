@@ -4,6 +4,7 @@ import csv
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -20,6 +21,7 @@ CILOVE_SCHEMA = "data_pracovni"
 def nacist_csv(
     soubor: Path, povinne: List[str], unikatni: List[str], extra_regio: bool = False,
     nepovinne_hodnoty: Optional[List[str]] = None,
+    formaty_kodu: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, str]]:
     """Načte používaná pole a ověří hodnoty i jednoznačnost kódů."""
     radky = []
@@ -34,6 +36,14 @@ def nacist_csv(
             if extra_regio and (row.get("text") or "").strip() == "Extra-Regio":
                 continue
             hodnoty = {pole: (row.get(pole) or "").strip() for pole in sloupce}
+            for pole, vzor in (formaty_kodu or {}).items():
+                # NUTS/LAU s prefixem CZ zachovávají nuly, číselné kódy ne.
+                if not vzor.startswith("CZ"):
+                    hodnoty[pole] = hodnoty[pole].lstrip("0")
+                if hodnoty[pole] and not re.fullmatch(vzor, hodnoty[pole]):
+                    raise ValueError(
+                        f"{soubor.name}, řádek {reader.line_num}: neplatný {pole}: {hodnoty[pole]}"
+                    )
             for pole in povinne:
                 if not hodnoty[pole]:
                     raise ValueError(f"{soubor.name}, řádek {reader.line_num}: prázdné pole {pole}")
@@ -119,20 +129,26 @@ def sestavit_uzemni_zaklad(
 ) -> Dict[str, object]:
     """Sestaví nové schéma; transakci a případný rollback řídí volající."""
     kraje = nacist_csv(slozka / "CIS0100_CS.csv",
-        ["chodnota", "text", "cznuts", "kod_ruian"], ["chodnota", "cznuts", "kod_ruian"], extra_regio=True)
+        ["chodnota", "text", "cznuts", "kod_ruian"], ["chodnota", "cznuts", "kod_ruian"], extra_regio=True,
+        formaty_kodu={"chodnota": r"[0-9]{4}", "cznuts": r"CZ[0-9]{3}", "kod_ruian": r"[0-9]{1,3}"})
     okresy = nacist_csv(slozka / "CIS0101_CS.csv",
         ["chodnota", "text", "cznuts", "okres_lau"],
-        ["chodnota", "cznuts", "okres_lau", "kod_ruian"], extra_regio=True, nepovinne_hodnoty=["kod_ruian"])
+        ["chodnota", "cznuts", "okres_lau", "kod_ruian"], extra_regio=True, nepovinne_hodnoty=["kod_ruian"],
+        formaty_kodu={"chodnota": r"[0-9]{5}", "cznuts": r"CZ[0-9]{3}[0-9A-Z]",
+                      "okres_lau": r"CZ[0-9]{3}[0-9A-Z]", "kod_ruian": r"[0-9]{1,4}"})
     okresy_bez_ruian = [
         {"kod_csu": row["chodnota"], "nazev": row["text"], "lau1": row["okres_lau"]}
         for row in okresy if not row["kod_ruian"]
     ]
     obce = nacist_csv(slozka / "VAZ0043_0101_CS.csv",
-        ["chodnota1", "text1", "chodnota2"], ["chodnota1"])
+        ["chodnota1", "text1", "chodnota2"], ["chodnota1"],
+        formaty_kodu={"chodnota1": r"[0-9]{6}", "chodnota2": r"[0-9]{5}"})
     mestske_casti = nacist_csv(slozka / "VAZ0044_0043_CS.csv",
-        ["chodnota1", "text1", "chodnota2"], ["chodnota1"])
+        ["chodnota1", "text1", "chodnota2"], ["chodnota1"],
+        formaty_kodu={"chodnota1": r"[0-9]{6}", "chodnota2": r"[0-9]{6}"})
     casti_obci = nacist_csv(slozka / "VAZ0042_0043_CS.csv",
-        ["chodnota1", "text1", "chodnota2"], ["chodnota1"])
+        ["chodnota1", "text1", "chodnota2"], ["chodnota1"],
+        formaty_kodu={"chodnota1": r"[0-9]{1,6}", "chodnota2": r"[0-9]{6}"})
 
     cursor.execute(
         sql.SQL("CREATE SCHEMA {schema}").format(schema=sql.Identifier(schema))
