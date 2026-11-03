@@ -2,6 +2,7 @@
 import csv
 import io
 import os
+from pathlib import Path
 import tempfile
 from datetime import datetime
 from typing import Optional
@@ -10,7 +11,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 URL_EXPORTU = "https://apl2.czso.cz/iSMS/do_cis_export"
-CILOVA_SLOZKA = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky"
+CILOVA_SLOZKA = Path(__file__).resolve().parent.parent / "tabulky_nove"
 HLAVICKA_KRAJU = [
     "kodjaz", "akrcis", "kodcis", "chodnota", "zkrtext", "text",
     "admplod", "admnepo", "cznuts", "kod_ruian", "zkrkraj",
@@ -49,27 +50,37 @@ def stahni_tabulku(
     if next(reader, None) != hlavicka:
         raise ValueError(f"ČSÚ vrátilo neočekávanou hlavičku tabulky {cilovy_soubor}.")
 
-    pocet_radku = 0
+    radky = []
+    sloupce_kodu = ("chodnota1", "chodnota2") if cisvaz else ("chodnota", "kod_ruian")
     for radek in reader:
         if len(radek) != len(hlavicka) or not any(hodnota.strip() for hodnota in radek):
             raise ValueError(f"Tabulka {cilovy_soubor} obsahuje neplatný řádek.")
-        pocet_radku += 1
-    if pocet_radku == 0:
+        radek = [hodnota.strip() for hodnota in radek]
+        for sloupec in sloupce_kodu:
+            index = hlavicka.index(sloupec)
+            radek[index] = radek[index].lstrip("0")
+        radky.append(radek)
+    if not radky:
         raise ValueError(f"Tabulka {cilovy_soubor} neobsahuje žádná data.")
 
     # Atomicka vymena dat stareho a noveho souboru
     docasna_cesta: Optional[str] = None
     try:
-        with tempfile.NamedTemporaryFile(dir=os.path.dirname(cilovy_soubor) or ".", delete=False) as soubor:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="",
+            dir=os.path.dirname(cilovy_soubor) or ".", delete=False,
+        ) as soubor:
             docasna_cesta = soubor.name
-            soubor.write(obsah)
+            writer = csv.writer(soubor)
+            writer.writerow(hlavicka)
+            writer.writerows(radky)
         os.replace(docasna_cesta, cilovy_soubor)
         docasna_cesta = None
     finally:
         if docasna_cesta is not None:
             os.remove(docasna_cesta)
 
-    return pocet_radku
+    return len(radky)
 
 
 if __name__ == "__main__":

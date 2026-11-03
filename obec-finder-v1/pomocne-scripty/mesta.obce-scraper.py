@@ -4,6 +4,7 @@ ID se čte z přesměrování - samotné profily úřadů se nestahují.
 """
 import csv
 import os
+from pathlib import Path
 import re
 import tempfile
 import time
@@ -13,11 +14,11 @@ import requests
 
 URL_VYHLEDAVANI = "https://mesta.obce.cz/vyhledat.asp"
 VSTUPNI_SOUBORY = [
-    "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/VAZ0043_0101_CS.csv",
-    "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/VAZ0044_0043_CS.csv",
+    Path(__file__).resolve().parent.parent / "tabulky_nove" / "VAZ0043_0101_CS.csv",
+    Path(__file__).resolve().parent.parent / "tabulky_nove" / "VAZ0044_0043_CS.csv",
 ]
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/mesta_obce_id.csv"
-SOUBOR_LOGU = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/chybejici_mesta_obce.txt"
+CILOVY_SOUBOR = Path(__file__).resolve().parent.parent / "tabulky_nove" / "mesta_obce_id.csv"
+SOUBOR_LOGU = Path(__file__).resolve().parent.parent / "tabulky_nove" / "chybejici_mesta_obce.txt"
 PAUZA = 0.15
 
 
@@ -28,7 +29,7 @@ def vytvor_slovnik_zuj() -> dict[str, str]:
         with open(cesta, encoding="utf-8-sig", newline="") as soubor:
             reader = csv.DictReader(soubor)
             for radek in reader:
-                zuj = radek["chodnota1"]
+                zuj = radek["chodnota1"].strip().lstrip("0")
                 nazev = radek["text1"].strip()
                 zuj_dict[zuj] = nazev
     return zuj_dict
@@ -54,11 +55,11 @@ def stahni_ids() -> int:
                 ) as odpoved:
                     odpoved.raise_for_status()
                     if odpoved.status_code in (301, 302, 303, 307, 308):
-                        cesta = odpoved.headers.get("Location", "")
+                        cesta = odpoved.headers.get("Location", "").strip()
                         shoda = re.fullmatch(r"/zsu/vyhledat-([0-9]+)\.htm", cesta, re.IGNORECASE)
                         if not shoda:
                             raise ValueError(f"Neočekávané přesměrování pro ZÚJ {zuj}: {cesta}")
-                        vysledky.append([zuj, shoda.group(1)])
+                        vysledky.append([zuj, shoda.group(1).lstrip("0")])
                     else:
                         odpoved.encoding = "windows-1250"
                         if odpoved.status_code != 200 or "Nenalezeno" not in odpoved.text:

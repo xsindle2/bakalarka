@@ -10,6 +10,7 @@ Je nutne to delat pres monitor, protoze ares neobsahuje vazbu na ZUJ kod."""
 
 import csv
 import os
+from pathlib import Path
 import tempfile
 from datetime import datetime
 from typing import Optional
@@ -18,11 +19,11 @@ from zoneinfo import ZoneInfo
 import requests
 
 URL_EXPORTU = "https://monitor.statnipokladna.gov.cz/api/ciselniky/7/data"
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/ico_obce.csv"
+CILOVY_SOUBOR = Path(__file__).resolve().parent.parent / "tabulky_nove" / "ico_obce.csv"
 
 
 def stahni_ico() -> int:
-    """Ověří filtrované obce, uloží CSV a vrátí počet řádků."""
+    """Stáhne filtrované obce, sjednotí zápis a uloží CSV."""
     parametry = {
         "date": datetime.now(ZoneInfo("Europe/Prague")).strftime("%Y-%m-%d"),
         "filters": '{"druhuj_id":"4"}',  # 4 = obec
@@ -40,24 +41,11 @@ def stahni_ico() -> int:
         raise ValueError("MONITOR nevrátil úplný seznam obcí.")
 
     radky = []
-    pouzita_ico = set()
-    pouzite_kody = set()
     for obec in obce:
-        ico = obec["ico"]
-        kod_obce = str(obec["zuj_id"])
-        nazev = obec["ucjed_nazev"]
-        if len(ico) != 8 or not ico.isdigit():
-            raise ValueError(f"MONITOR vrátil neplatné IČO: {ico}")
-        if len(kod_obce) != 6 or not kod_obce.isdigit() or kod_obce == "000000":
-            raise ValueError(f"U IČO {ico} je neplatný kód obce: {kod_obce}")
-        if not nazev.strip():
-            raise ValueError(f"U IČO {ico} chybí platný název obce.")
-        if ico in pouzita_ico or kod_obce in pouzite_kody:
-            raise ValueError(f"Nejednoznačná vazba IČO {ico} na kód obce {kod_obce}.")
-
+        ico = str(obec["ico"] if obec["ico"] is not None else "").strip()
+        kod_obce = str(obec["zuj_id"] if obec["zuj_id"] is not None else "").strip().lstrip("0")
+        nazev = (obec["ucjed_nazev"] or "").strip()
         radky.append([ico, kod_obce, nazev])
-        pouzita_ico.add(ico)
-        pouzite_kody.add(kod_obce)
 
     docasna_cesta: Optional[str] = None
     try:

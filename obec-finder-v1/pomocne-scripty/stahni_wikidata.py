@@ -1,13 +1,14 @@
 """Stažení Q-kódů a GeoNames ID českých obcí z Wikidat."""
 import csv
 import os
+from pathlib import Path
 import tempfile
 from typing import Optional
 
 import requests
 
 URL_EXPORTU = "https://query.wikidata.org/sparql"
-CILOVY_SOUBOR = "/Users/jakubsindler/bakalarka/obec-finder-v1/tabulky/wikidata_obce.csv"
+CILOVY_SOUBOR = Path(__file__).resolve().parent.parent / "tabulky_nove" / "wikidata_obce.csv"
 DOTAZ = """
 SELECT ?item ?lau2 ?geonames WHERE {
   ?item wdt:P7606 ?lau2.
@@ -17,7 +18,7 @@ SELECT ?item ?lau2 ?geonames WHERE {
 
 
 def stahni_q_kody() -> int:
-    """Ověří výsledky dotazu, uloží CSV a vrátí počet řádků."""
+    """Stáhne výsledky dotazu, sjednotí zápis a uloží CSV."""
     with requests.get(
         URL_EXPORTU,
         params={"format": "json", "query": DOTAZ},
@@ -32,16 +33,11 @@ def stahni_q_kody() -> int:
 
     radky = []
     for zaznam in vysledky:
-        qcode = zaznam["item"]["value"].rsplit("/", 1)[-1]
-        lau2 = zaznam["lau2"]["value"]
-        geonames = zaznam.get("geonames", {}).get("value", "")
-
-        if not qcode.startswith("Q") or not qcode[1:].isdigit():
-            raise ValueError(f"Wikidata vrátila neplatný Q-kód: {qcode}")
-        if len(lau2) != 6 or not lau2.isdigit():
-            raise ValueError(f"Wikidata vrátila neplatný kód obce: {lau2}")
-        if geonames and not geonames.isdigit():
-            raise ValueError(f"Wikidata vrátila neplatné GeoNames ID: {geonames}")
+        qcode = zaznam["item"]["value"].strip().rsplit("/", 1)[-1].strip()
+        if qcode.startswith("q"):
+            qcode = "Q" + qcode[1:]
+        lau2 = zaznam["lau2"]["value"].strip().lstrip("0")
+        geonames = zaznam.get("geonames", {}).get("value", "").strip().lstrip("0")
         radky.append([qcode, lau2, geonames])
 
     # Atomická výměna dat starého a nového souboru
