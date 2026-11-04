@@ -83,7 +83,8 @@ def stahni_tabulku(
     return len(radky)
 
 
-if __name__ == "__main__":
+def stahni_csu() -> None:
+    """Postupně stáhne všech pět územních tabulek; chyba zastaví další stahování."""
     tabulky = [
         ("100", "CIS0100_CS.csv", HLAVICKA_KRAJU, None),
         ("101", "CIS0101_CS.csv", HLAVICKA_OKRESU, None),
@@ -91,11 +92,15 @@ if __name__ == "__main__":
         ("42", "VAZ0042_0043_CS.csv", HLAVICKA_VAZBY, "43_1218"),
         ("44", "VAZ0044_0043_CS.csv", HLAVICKA_VAZBY, "43_35"),
     ]
+    for kodcis, nazev_souboru, hlavicka, cisvaz in tabulky:
+        cilovy_soubor = os.path.join(CILOVA_SLOZKA, nazev_souboru)
+        pocet = stahni_tabulku(kodcis, cilovy_soubor, hlavicka, cisvaz)
+        print(f"Uloženo {pocet} záznamů do {cilovy_soubor}.")
+
+
+if __name__ == "__main__":
     try:
-        for kodcis, nazev_souboru, hlavicka, cisvaz in tabulky:
-            cilovy_soubor = os.path.join(CILOVA_SLOZKA, nazev_souboru)
-            pocet = stahni_tabulku(kodcis, cilovy_soubor, hlavicka, cisvaz)
-            print(f"Uloženo {pocet} záznamů do {cilovy_soubor}.")
+        stahni_csu()
     except Exception as chyba:
         print(f"Stažení tabulek selhalo: {chyba}")
         raise SystemExit(1)
