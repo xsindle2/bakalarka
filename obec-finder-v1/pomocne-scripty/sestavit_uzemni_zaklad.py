@@ -12,7 +12,7 @@ import psycopg2
 from psycopg2 import sql
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from main import vycistit_nazev
+from nazvy import vycistit_nazev
 
 SLOZKA_TABULEK = Path(__file__).resolve().parent.parent / "tabulky"
 CILOVE_SCHEMA = "data_pracovni"
