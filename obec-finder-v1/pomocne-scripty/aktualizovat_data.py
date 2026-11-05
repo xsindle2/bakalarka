@@ -79,9 +79,6 @@ def aktualizovat_data() -> Dict[str, object]:
             if cast["chybejici_puvodni"] or cast["chybejici_nove"]:
                 raise ValueError(f"Chybějící původní nebo nové CSV: {nazev}.")
         except (OSError, ValueError, RuntimeError, KeyError, csv.Error, BadZipFile) as chyba:
-            # Nový strom zatím vyžaduje všechny nové doplňkové zdroje.
-            if novy_strom:
-                raise
             chyby_zdroju[nazev] = {"faze": faze, "chyba": str(chyba)}
 
     vysledek = porovnani.copy()
@@ -90,6 +87,8 @@ def aktualizovat_data() -> Dict[str, object]:
     importy = {}
     vysledek["importy"] = importy
     vysledek["chyby_zdroju"] = chyby_zdroju
+    pouzite_puvodni_csv = []
+    vysledek["pouzite_puvodni_csv"] = pouzite_puvodni_csv
     vysledek["predchozi_schema"] = None
     vysledek["uzemni_zaklad"] = None
 
@@ -110,13 +109,35 @@ def aktualizovat_data() -> Dict[str, object]:
                     cilove_schema = datetime.now(ZoneInfo("Europe/Prague")).strftime("data_%Y%m%d_%H%M%S")
                     vysledek["uzemni_zaklad"] = sestavit_uzemni_zaklad(cursor, SLOZKA_NOVE, cilove_schema)
                     for nazev, _, nahradit in zdroje:
-                        importy[nazev] = nahradit(cursor, SLOZKA_NOVE / nazev, cilove_schema)
+                        if nazev not in chyby_zdroju or chyby_zdroju[nazev]["faze"] != "stahovani":
+                            cursor.execute("SAVEPOINT import_doplnku;")
+                            try:
+                                report = nahradit(cursor, SLOZKA_NOVE / nazev, cilove_schema)
+                            except (ChybaZdrojovychDat, OSError, UnicodeError, csv.Error,
+                                    psycopg2.DataError, psycopg2.IntegrityError) as chyba:
+                                cursor.execute("ROLLBACK TO SAVEPOINT import_doplnku;")
+                                chyby_zdroju[nazev] = {"faze": "import", "chyba": str(chyba)}
+                            else:
+                                cursor.execute("RELEASE SAVEPOINT import_doplnku;")
+                                importy[nazev] = report
+                                continue
+                            cursor.execute("RELEASE SAVEPOINT import_doplnku;")
+
+                        try:
+                            importy[nazev] = nahradit(cursor, SLOZKA_PUVODNI / nazev, cilove_schema)
+                        except (ChybaZdrojovychDat, OSError, UnicodeError, csv.Error,
+                                psycopg2.DataError, psycopg2.IntegrityError) as chyba:
+                            raise ChybaZdrojovychDat(
+                                f"Nelze načíst ani původní CSV {nazev}: {chyba}"
+                            ) from chyba
+                        pouzite_puvodni_csv.append(nazev)
                     nastavit_aktivni_schema(cursor, cilove_schema)
                 else:
                     cilove_schema = aktivni_schema
 
         if novy_strom:
-            for nazev in list(SOUBORY_CSU) + list(importy):
+            nove_doplnky = [nazev for nazev in importy if nazev not in pouzite_puvodni_csv]
+            for nazev in list(SOUBORY_CSU) + nove_doplnky:
                 nahradit_csv(nazev)
         else:
             for nazev, _, nahradit in zdroje:
@@ -152,7 +173,9 @@ def main() -> None:
     elif vysledek["uzemni_zaklad"] is not None:
         print(f"Nová datová verze {vysledek['cilove_schema']} byla sestavena a aktivována.")
         if vysledek["stav"] == "castecny":
-            print("Doplňkové údaje jsou částečné. Podrobnosti jsou v reportech importů.")
+            print("Doplňkové údaje jsou částečné. Podrobnosti jsou v repoortech importů a chyby_zdroju.")
+        if vysledek["pouzite_puvodni_csv"]:
+            print("Použita původní CSV: " + ", ".join(vysledek["pouzite_puvodni_csv"]))
     elif vysledek["stav"] == "castecny":
         print("Aktualizace doplňků je částečná. Podrobnosti jsou v importech a chyby_zdroju.")
     else:
