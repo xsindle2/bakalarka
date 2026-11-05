@@ -10,6 +10,7 @@ from typing import Dict
 
 import psycopg2
 from psycopg2 import sql
+from chyby_importu import ChybaZdrojovychDat
 
 SOUBOR_WIKIDATA = Path(__file__).resolve().parent.parent / "tabulky" / "wikidata_obce.csv"
 CILOVE_SCHEMA = "data_pracovni"
@@ -24,7 +25,7 @@ def nahradit_wikidata_obci(
     with soubor.open(encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f, strict=True)
         if not {"qcode", "lau2", "geonames"}.issubset(reader.fieldnames or []):
-            raise ValueError("Soubor musí obsahovat sloupce qcode, lau2 a geonames.")
+            raise ChybaZdrojovychDat("Soubor musí obsahovat sloupce qcode, lau2 a geonames.")
         for row in reader:
             qcode = (row.get("qcode") or "").strip()
             if qcode.startswith("q"):
@@ -46,7 +47,7 @@ def nahradit_wikidata_obci(
             if qcode or geonames:
                 radky.append({"qcode": qcode, "lau2": lau2, "geonames": geonames})
     if not radky and not chyby:
-        raise ValueError("Soubor Wikidat je prázdný.")
+        raise ChybaZdrojovychDat("Soubor Wikidat je prázdný.")
 
     # Chybné jméno schématu nesmí vést k použití tabulek z public.
     cursor.execute("""
@@ -90,7 +91,7 @@ def nahradit_wikidata_obci(
                 pouzite_vazby.add(klic)
                 vazby.append((pk, hodnota, typ, priorita))
     if not vazby:
-        raise ValueError("Žádná platná vazba Wikidat a GeoNames id se nespárovala s obcí.")
+        raise ChybaZdrojovychDat("Žádná platná vazba Wikidat a GeoNames id se nespárovala s obcí.")
 
     cursor.execute("""
         DELETE FROM ids i USING geo_locations o

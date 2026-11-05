@@ -10,6 +10,7 @@ from typing import Dict
 
 import psycopg2
 from psycopg2 import sql
+from chyby_importu import ChybaZdrojovychDat
 
 SOUBOR_ICO = Path(__file__).resolve().parent.parent / "tabulky" / "ico_mestske_casti.csv"
 CILOVE_SCHEMA = "data_pracovni"
@@ -26,7 +27,7 @@ def nahradit_ico_mestskych_casti(
     with soubor.open(encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f, delimiter=";", strict=True)
         if not {"ico", "nazev"}.issubset(reader.fieldnames or []):
-            raise ValueError("Soubor musí obsahovat sloupce ico a nazev.")
+            raise ChybaZdrojovychDat("Soubor musí obsahovat sloupce ico a nazev.")
         for row in reader:
             ico = (row.get("ico") or "").strip()
             nazev = (row.get("nazev") or "").strip()
@@ -39,12 +40,12 @@ def nahradit_ico_mestskych_casti(
                               "hodnota": nazev, "duvod": "Prázdný název městské části; vynechán celý řádek."})
                 continue
             if ico in pouzita_ico or nazev in pouzite_nazvy:
-                raise ValueError(f"Duplicitní IČO nebo název městské části: {ico}, {nazev}.")
+                raise ChybaZdrojovychDat(f"Duplicitní IČO nebo název městské části: {ico}, {nazev}.")
             pouzita_ico.add(ico)
             pouzite_nazvy.add(nazev)
             radky.append({"ico": ico, "nazev": nazev})
     if not radky and not chyby:
-        raise ValueError("Soubor IČO pražských městských částí je prázdný.")
+        raise ChybaZdrojovychDat("Soubor IČO pražských městských částí je prázdný.")
 
     # Chybné jméno schématu nesmí vést k použití tabulek z public
     cursor.execute("""
@@ -78,7 +79,7 @@ def nahradit_ico_mestskych_casti(
         else:
             vazby.append((pk, row["ico"]))
     if not vazby:
-        raise ValueError("Žádné IČO nelze přiřadit k pražské městské části. Původní vazby se nenahrazují.")
+        raise ChybaZdrojovychDat("Žádné IČO nelze přiřadit k pražské městské části. Původní vazby se nenahrazují.")
 
     cursor.execute("""
         DELETE FROM ids i USING geo_locations o

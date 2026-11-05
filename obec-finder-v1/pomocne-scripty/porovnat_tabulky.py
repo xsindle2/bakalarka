@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 SLOZKA_PUVODNI = Path(__file__).resolve().parent.parent / "tabulky"
 SLOZKA_NOVE = Path(__file__).resolve().parent.parent / "tabulky_nove"
@@ -65,13 +65,16 @@ def nacist_pouzivane_hodnoty(soubor: Path) -> List[Tuple[str, ...]]:
     return sorted(radky)
 
 
-def porovnat_tabulky(slozka_puvodni: Path, slozka_nove: Path) -> Dict[str, List[str]]:
+def porovnat_tabulky(
+    slozka_puvodni: Path, slozka_nove: Path, soubory: Optional[Tuple[str, ...]] = None
+) -> Dict[str, List[str]]:
     """Porovná používané hodnoty CSV bez závislosti na pořadí řádků a sloupců."""
     vysledek = {
         "zmenene": [], "nezmenene": [],
         "chybejici_puvodni": [], "chybejici_nove": [],
     }
-    for nazev in SOUBORY:
+    soubory = tuple(SOUBORY) if soubory is None else soubory
+    for nazev in soubory:
         puvodni = slozka_puvodni / nazev
         novy = slozka_nove / nazev
         if not puvodni.is_file():

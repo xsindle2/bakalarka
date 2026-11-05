@@ -1,5 +1,6 @@
 """Stažení zdrojů a aktualizace doplňků nebo sestavení nové datové verze."""
 
+import csv
 from datetime import datetime
 import json
 import os
@@ -8,11 +9,13 @@ import shutil
 import sys
 from typing import Dict
 from zoneinfo import ZoneInfo
+from zipfile import BadZipFile
 
 import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from aktivni_data import nacist_aktivni_schema, nastavit_aktivni_schema
+from chyby_importu import ChybaZdrojovychDat
 from sestavit_uzemni_zaklad import sestavit_uzemni_zaklad
 from nahradit_ico_obci import nahradit_ico_obci
 from nahradit_ico_mestskych_casti import nahradit_ico_mestskych_casti
@@ -35,44 +38,69 @@ SOUBORY_CSU = (
 )
 
 
+def nahradit_csv(nazev: str) -> None:
+    """Nahradí CSV po potvrzení importu; chyba kopie již nevrací databázi."""
+    try:
+        shutil.copyfile(SLOZKA_NOVE / nazev, SLOZKA_PUVODNI / nazev)
+    except OSError as chyba:
+        raise RuntimeError(
+            f"DB je aktualizovaná, ale kopírování {nazev} selhalo: {chyba}"
+        ) from chyba
+
+
 def aktualizovat_data() -> Dict[str, object]:
-    """Aktualizuje doplňky nebo vytvoří a aktivuje novou verzi; pak převezme CSV."""
+    """Aktualizuje nezávislé doplňky nebo transakčně sestaví celou novou verzi."""
     print("Stahuji územní data ČSÚ.", flush=True)
     stahni_csu()
-    print("Stahuji IČO obcí.", flush=True)
-    stahni_ico()
-    print("Stahuji IČO městských částí.", flush=True)
-    stahni_ico_mestske_casti()
-    print("Stahuji Wikidata.", flush=True)
-    stahni_q_kody()
-    print("Stahuji PSČ.", flush=True)
-    stahni_psc()
-    print("Stahuji ID mesta.obce.cz.", flush=True)
-    stahni_ids()
-
-    porovnani = porovnat_tabulky(SLOZKA_PUVODNI, SLOZKA_NOVE)
+    porovnani = porovnat_tabulky(SLOZKA_PUVODNI, SLOZKA_NOVE, SOUBORY_CSU)
     if porovnani["chybejici_puvodni"] or porovnani["chybejici_nove"]:
         raise ValueError(
             f"Chybějící původní CSV: {porovnani['chybejici_puvodni']}; "
             f"chybějící nové CSV: {porovnani['chybejici_nove']}."
         )
+    novy_strom = bool(porovnani["zmenene"])
+    zdroje = (
+        ("ico_obce.csv", stahni_ico, nahradit_ico_obci),
+        ("ico_mestske_casti.csv", stahni_ico_mestske_casti, nahradit_ico_mestskych_casti),
+        ("wikidata_obce.csv", stahni_q_kody, nahradit_wikidata_obci),
+        ("zv_cobce_psc.csv", stahni_psc, nahradit_psc),
+        ("mesta_obce_id.csv", stahni_ids, nahradit_mesta_obce),
+    )
+    chyby_zdroju = {}
+    for nazev, stahnout, _ in zdroje:
+        faze = "stahovani"
+        try:
+            print(f"Stahuji {nazev}.", flush=True)
+            stahnout()
+            faze = "porovnani"
+            cast = porovnat_tabulky(SLOZKA_PUVODNI, SLOZKA_NOVE, (nazev,))
+            for klic in porovnani:
+                porovnani[klic].extend(cast[klic])
+            if cast["chybejici_puvodni"] or cast["chybejici_nove"]:
+                raise ValueError(f"Chybějící původní nebo nové CSV: {nazev}.")
+        except (OSError, ValueError, RuntimeError, KeyError, csv.Error, BadZipFile) as chyba:
+            # Nový strom zatím vyžaduje všechny nové doplňkové zdroje.
+            if novy_strom:
+                raise
+            chyby_zdroju[nazev] = {"faze": faze, "chyba": str(chyba)}
+
     vysledek = porovnani.copy()
-    vysledek["stav"] = "beze_zmen"
+    vysledek["stav"] = "castecny" if chyby_zdroju else "beze_zmen"
     vysledek["cilove_schema"] = None
-    vysledek["importy"] = {}
+    importy = {}
+    vysledek["importy"] = importy
+    vysledek["chyby_zdroju"] = chyby_zdroju
     vysledek["predchozi_schema"] = None
     vysledek["uzemni_zaklad"] = None
 
     zmenene = porovnani["zmenene"]
     if not zmenene:
         return vysledek
-    novy_strom = any(soubor in zmenene for soubor in SOUBORY_CSU)
 
     conn = psycopg2.connect(
         host=os.getenv("DB_HOST"), database=os.getenv("DB_NAME"),
         user=os.getenv("DB_USER"), password=os.getenv("DB_PASS"),
     )
-    importy = {}
     try:
         with conn:
             with conn.cursor() as cursor:
@@ -81,38 +109,36 @@ def aktualizovat_data() -> Dict[str, object]:
                     vysledek["predchozi_schema"] = aktivni_schema
                     cilove_schema = datetime.now(ZoneInfo("Europe/Prague")).strftime("data_%Y%m%d_%H%M%S")
                     vysledek["uzemni_zaklad"] = sestavit_uzemni_zaklad(cursor, SLOZKA_NOVE, cilove_schema)
+                    for nazev, _, nahradit in zdroje:
+                        importy[nazev] = nahradit(cursor, SLOZKA_NOVE / nazev, cilove_schema)
+                    nastavit_aktivni_schema(cursor, cilove_schema)
                 else:
                     cilove_schema = aktivni_schema
-                if novy_strom or "ico_obce.csv" in zmenene:
-                    importy["ico_obce.csv"] = nahradit_ico_obci(cursor, SLOZKA_NOVE / "ico_obce.csv", cilove_schema)
-                if novy_strom or "ico_mestske_casti.csv" in zmenene:
-                    importy["ico_mestske_casti.csv"] = nahradit_ico_mestskych_casti(
-                        cursor, SLOZKA_NOVE / "ico_mestske_casti.csv", cilove_schema)
-                if novy_strom or "wikidata_obce.csv" in zmenene:
-                    importy["wikidata_obce.csv"] = nahradit_wikidata_obci(cursor, SLOZKA_NOVE / "wikidata_obce.csv", cilove_schema)
-                if novy_strom or "zv_cobce_psc.csv" in zmenene:
-                    importy["zv_cobce_psc.csv"] = nahradit_psc(cursor, SLOZKA_NOVE / "zv_cobce_psc.csv", cilove_schema)
-                if novy_strom or "mesta_obce_id.csv" in zmenene:
-                    importy["mesta_obce_id.csv"] = nahradit_mesta_obce(cursor, SLOZKA_NOVE / "mesta_obce_id.csv", cilove_schema)
-                if novy_strom:
-                    nastavit_aktivni_schema(cursor, cilove_schema)
+
+        if novy_strom:
+            for nazev in list(SOUBORY_CSU) + list(importy):
+                nahradit_csv(nazev)
+        else:
+            for nazev, _, nahradit in zdroje:
+                if nazev not in zmenene or nazev in chyby_zdroju:
+                    continue
+                try:
+                    with conn:
+                        with conn.cursor() as cursor:
+                            report = nahradit(cursor, SLOZKA_NOVE / nazev, cilove_schema)
+                except (ChybaZdrojovychDat, OSError, UnicodeError, csv.Error,
+                        psycopg2.DataError, psycopg2.IntegrityError) as chyba:
+                    # Výjimka opustila with conn: změny tohoto zdroje už jsou vrácené.
+                    chyby_zdroju[nazev] = {"faze": "import", "chyba": str(chyba)}
+                    continue
+                importy[nazev] = report
+                nahradit_csv(nazev)
     finally:
         conn.close()
 
-    prevzit = list(SOUBORY_CSU) + list(importy) if novy_strom else list(importy)
-    for nazev in prevzit:
-        try:
-            shutil.copyfile(SLOZKA_NOVE / nazev, SLOZKA_PUVODNI / nazev)
-        except OSError as chyba:
-            raise RuntimeError(
-                f"DB je aktualizovaná, ale kopírování {nazev} selhalo: {chyba}"
-            ) from chyba
-
     vysledek["cilove_schema"] = cilove_schema
-    vysledek["importy"] = importy
-    
-    if any(r["stav"] == "castecny" for r in importy.values()):
-        vysledek["stav"] = "castecny" 
+    if chyby_zdroju or any(r["stav"] == "castecny" for r in importy.values()):
+        vysledek["stav"] = "castecny"
     else:
         vysledek["stav"] = "aktualizovano"
     return vysledek
@@ -128,7 +154,7 @@ def main() -> None:
         if vysledek["stav"] == "castecny":
             print("Doplňkové údaje jsou částečné. Podrobnosti jsou v reportech importů.")
     elif vysledek["stav"] == "castecny":
-        print("Doplňkové údaje byly aktualizovány částečně. Podrobnosti jsou v reportech importů.")
+        print("Aktualizace doplňků je částečná. Podrobnosti jsou v importech a chyby_zdroju.")
     else:
         print("Změněné doplňkové údaje byly aktualizovány v aktivním schématu.")
 

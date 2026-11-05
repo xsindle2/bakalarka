@@ -10,6 +10,7 @@ from typing import Dict
 
 import psycopg2
 from psycopg2 import sql
+from chyby_importu import ChybaZdrojovychDat
 
 SOUBOR_ICO = Path(__file__).resolve().parent.parent / "tabulky" / "ico_obce.csv"
 CILOVE_SCHEMA = "data_pracovni"
@@ -26,7 +27,7 @@ def nahradit_ico_obci(
     with soubor.open(encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f, delimiter=";", strict=True)
         if not {"ico", "kod_obce"}.issubset(reader.fieldnames or []):
-            raise ValueError("Soubor musí obsahovat sloupce ico a kod_obce.")
+            raise ChybaZdrojovychDat("Soubor musí obsahovat sloupce ico a kod_obce.")
         for row in reader:
             ico = (row.get("ico") or "").strip()
             kod_obce = (row.get("kod_obce") or "").strip().lstrip("0")
@@ -39,12 +40,12 @@ def nahradit_ico_obci(
                               "hodnota": kod_obce, "duvod": "Neplatné LAU2; vynechán celý řádek."})
                 continue
             if ico in pouzita_ico or kod_obce in pouzite_kody:
-                raise ValueError(f"Duplicitní IČO nebo kód obce: {ico}, {kod_obce}.")
+                raise ChybaZdrojovychDat(f"Duplicitní IČO nebo kód obce: {ico}, {kod_obce}.")
             pouzita_ico.add(ico)
             pouzite_kody.add(kod_obce)
             radky.append({"ico": ico, "kod_obce": kod_obce})
     if not radky and not chyby:
-        raise ValueError("Soubor IČO obcí je prázdný.")
+        raise ChybaZdrojovychDat("Soubor IČO obcí je prázdný.")
 
     # Chybné jméno schématu nesmí vést k použití tabulek z public
     cursor.execute("""
@@ -79,7 +80,7 @@ def nahradit_ico_obci(
         else:
             vazby.append((pk, row["ico"]))
     if not vazby:
-        raise ValueError("Žádné IČO nelze přiřadit k obci. Původní vazby se nenahrazují.")
+        raise ChybaZdrojovychDat("Žádné IČO nelze přiřadit k obci. Původní vazby se nenahrazují.")
 
     cursor.execute("""
         DELETE FROM ids i USING geo_locations o

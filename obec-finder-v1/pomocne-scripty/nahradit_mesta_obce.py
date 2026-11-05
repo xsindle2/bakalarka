@@ -10,6 +10,7 @@ from typing import Dict
 
 import psycopg2
 from psycopg2 import sql
+from chyby_importu import ChybaZdrojovychDat
 
 SOUBOR_MESTA_OBCE = Path(__file__).resolve().parent.parent / "tabulky" / "mesta_obce_id.csv"
 CILOVE_SCHEMA = "data_pracovni"
@@ -25,7 +26,7 @@ def nahradit_mesta_obce(
     with soubor.open(encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f, delimiter=";", strict=True)
         if not {"zuj", "id_mesta_obce"}.issubset(reader.fieldnames or []):
-            raise ValueError("Soubor musí obsahovat sloupce zuj a id_mesta_obce.")
+            raise ChybaZdrojovychDat("Soubor musí obsahovat sloupce zuj a id_mesta_obce.")
         for row in reader:
             zuj = (row.get("zuj") or "").strip().lstrip("0")
             id_webu = (row.get("id_mesta_obce") or "").strip().lstrip("0")
@@ -40,12 +41,12 @@ def nahradit_mesta_obce(
             klic = zuj
             if klic in pouzite_kody:
                 if pouzite_kody[klic] != id_webu:
-                    raise ValueError(f"Více odlišných ID webu pro ZÚJ {zuj}.")
+                    raise ChybaZdrojovychDat(f"Více odlišných ID webu pro ZÚJ {zuj}.")
                 continue
             pouzite_kody[klic] = id_webu
             radky.append({"zuj": zuj, "id_mesta_obce": id_webu})
     if not radky and not chyby:
-        raise ValueError("Soubor mesta.obce.cz je prázdný.")
+        raise ChybaZdrojovychDat("Soubor mesta.obce.cz je prázdný.")
 
     # Chybné jméno schématu nesmí vést k použití tabulek z public.
     cursor.execute("""
@@ -83,7 +84,7 @@ def nahradit_mesta_obce(
             pk, typ = uzel
             vazby.append((pk, row["id_mesta_obce"], typ))
     if not vazby:
-        raise ValueError("Žádné ID mesta.obce.cz se nespárovalo. Původní vazby se nenahrazují.")
+        raise ChybaZdrojovychDat("Žádné ID mesta.obce.cz se nespárovalo. Původní vazby se nenahrazují.")
 
     cursor.execute("""
         DELETE FROM ids i USING geo_locations o

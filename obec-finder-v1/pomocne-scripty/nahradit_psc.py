@@ -10,6 +10,7 @@ from typing import Dict
 
 import psycopg2
 from psycopg2 import sql
+from chyby_importu import ChybaZdrojovychDat
 
 SOUBOR_PSC = Path(__file__).resolve().parent.parent / "tabulky" / "zv_cobce_psc.csv"
 CILOVE_SCHEMA = "data_pracovni"
@@ -29,7 +30,7 @@ def nahradit_psc(
     with soubor.open(encoding="windows-1250", newline="") as f:
         reader = csv.DictReader(f, delimiter=";", strict=True)
         if not {"psc", "kodobce", "kodmomc", "kodcobce"}.issubset(reader.fieldnames or []):
-            raise ValueError("Soubor musí obsahovat sloupce psc, kodobce, kodmomc a kodcobce.")
+            raise ChybaZdrojovychDat("Soubor musí obsahovat sloupce psc, kodobce, kodmomc a kodcobce.")
         for row in reader:
             psc = (row.get("psc") or "").replace(" ", "").strip().lstrip("0")
             if not re.fullmatch(r"[0-9]{5}", psc):
@@ -50,7 +51,7 @@ def nahradit_psc(
                     zaznam[sloupec] = kod
             radky.append(zaznam)
     if not radky and not chyby:
-        raise ValueError("Soubor PSČ je prázdný.")
+        raise ChybaZdrojovychDat("Soubor PSČ je prázdný.")
 
     # Chybné jméno schématu nesmí vést k použití tabulek z public.
     cursor.execute("""
@@ -98,7 +99,7 @@ def nahradit_psc(
                 pouzite_vazby.add(klic)
                 vazby.append((pk, row["psc"], priorita, typ))
     if not vazby:
-        raise ValueError("Žádná platná vazba PSČ se nespárovala. Původní vazby se nenahrazují.")
+        raise ChybaZdrojovychDat("Žádná platná vazba PSČ se nespárovala. Původní vazby se nenahrazují.")
 
     cursor.execute("""
         DELETE FROM ids i USING geo_locations o
