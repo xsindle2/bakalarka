@@ -14,6 +14,10 @@ from aktivni_data import (
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import List
+from validace_identifikatoru import (
+    PozadavekValidace, VysledekValidace,
+    overit_identifikator,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "pomocne-scripty"))
 from sestavit_uzemni_zaklad import sestavit_uzemni_zaklad
@@ -173,6 +177,16 @@ def delete_location(identifier_value: str):
     finally:
         cursor.close()
         conn.close()
+
+
+@app.post("/validate", response_model=VysledekValidace)
+def validate_id(pozadavek: PozadavekValidace) -> VysledekValidace:
+    """Ověří formát vstupu a kontrolní číslici IČO.
+
+    'format_valid' kontroluje přesný formát, 'accepted' povoluje i drobné úpravy.
+    'valid' navíc zohledňuje kontrolní číslici.
+    """
+    return overit_identifikator(pozadavek.type, pozadavek.value)
 
 
 # --- VYHLEDÁVACÍ ENDPOINT ---
