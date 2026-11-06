@@ -10,6 +10,29 @@ services:
       DB_NAME: zuj-name_db
       DB_USER: student
       DB_PASS: heslo123
+    volumes:
+      - ./tabulky:/app/tabulky:ro
+
+  aktualizace:
+    profiles: [aktualizace]
+    build: .
+    command: [python, -u, pomocne-scripty/planovat_aktualizace.py]
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_NAME: zuj-name_db
+      DB_USER: student
+      DB_PASS: heslo123
+    volumes:
+      - ./tabulky:/app/tabulky
+      - ./tabulky_nove:/app/tabulky_nove
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   db:
     image: postgres:15
