@@ -7,3 +7,7 @@ testy/
 /obec-finder-v1/tabulky_old/
 /obec-finder-v1/tabulky_nove/*.csv
 /obec-finder-v1/tabulky_nove/chybejici_mesta_obce.txt
+/.vscode/settings.json
+/obec-finder-v1/AKTUALIZACE_DAT.md
+/obec-finder-v1/TODO.md
+/obec-finder-v1/tests/
