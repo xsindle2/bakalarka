@@ -8,11 +8,12 @@ from pydantic import BaseModel, StrictStr
 
 TypIdentifikatoru = Literal[
     "ico", "zuj", "lau2", "nuts3", "lau1", "ruian", "qcode",
-    "geonames", "momc", "kod_cobce", "psc", "mesta_obce",
+    "geonames", "momc", "kod_cobce", "psc", "mesta_obce", "kod_ku",
 ]
 
 # Pravidla přesného vstupního zápisu.
 FORMATY: Dict[str, Tuple[str, str]] = {
+    "kod_ku": (r"[0-9]{6}", "Kód katastrálního území musí obsahovat přesně 6 číslic; přijímají se i nuly na začátku."),
     "ico": (r"[0-9]{8}", "IČO musí obsahovat přesně 8 číslic včetně úvodních nul."),
     "lau2": (r"[0-9]{6}", "LAU2/ZÚJ musí obsahovat přesně 6 číslic; přijímají se i nuly na začátku."),
     "nuts3": (r"CZ[0-9]{3}", "NUTS3 musí mít tvar CZ a 3 číslice."),
@@ -52,7 +53,7 @@ def normalizovat_zapis(typ: str, hodnota: str) -> str:
         elif re.fullmatch(r"[0-9]{1,7}", upravena):
             upravena = upravena.zfill(8)
 
-    elif typ == "lau2":
+    elif typ in ("lau2", "kod_ku"):
         if re.fullmatch(r"0*[0-9]{6}", upravena):
             upravena = upravena[-6:]
 
