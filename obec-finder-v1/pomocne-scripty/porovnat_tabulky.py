@@ -15,6 +15,7 @@ SOUBORY = {
     "VAZ0043_0101_CS.csv": (("chodnota1", "text1", "chodnota2"), ",", "utf-8"),
     "VAZ0044_0043_CS.csv": (("chodnota1", "text1", "chodnota2"), ",", "utf-8"),
     "VAZ0042_0043_CS.csv": (("chodnota1", "text1", "chodnota2"), ",", "utf-8"),
+    "UI_KATASTRALNI_UZEMI.csv": (("KOD", "NAZEV", "OBEC_KOD"), ",", "utf-8"),
     "ico_obce.csv": (("ico", "kod_obce"), ";", "utf-8"),
     "ico_mestske_casti.csv": (("ico", "nazev"), ";", "utf-8"),
     "wikidata_obce.csv": (("qcode", "lau2", "geonames"), ",", "utf-8"),
