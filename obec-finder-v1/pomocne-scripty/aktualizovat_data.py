@@ -24,6 +24,7 @@ from nahradit_psc import nahradit_psc
 from nahradit_mesta_obce import nahradit_mesta_obce
 from porovnat_tabulky import porovnat_tabulky
 from stahni_csu import stahni_csu
+from stahni_katastralni_uzemi import stahni_katastralni_uzemi
 from stahni_ico import stahni_ico
 from stahni_ico_mestske_casti import stahni_ico_mestske_casti
 from stahni_wikidata import stahni_q_kody
@@ -36,6 +37,9 @@ SOUBORY_CSU = (
     "CIS0100_CS.csv", "CIS0101_CS.csv", "VAZ0043_0101_CS.csv",
     "VAZ0044_0043_CS.csv", "VAZ0042_0043_CS.csv",
 )
+
+SOUBOR_KU = "UI_KATASTRALNI_UZEMI.csv"
+SOUBORY_STROMU = SOUBORY_CSU + (SOUBOR_KU,)
 
 
 def nahradit_csv(nazev: str) -> None:
@@ -58,6 +62,14 @@ def aktualizovat_data() -> Dict[str, object]:
             f"Chybějící původní CSV: {porovnani['chybejici_puvodni']}; "
             f"chybějící nové CSV: {porovnani['chybejici_nove']}."
         )
+    print("Stahuji katastrální území ČÚZK.", flush=True)
+    stahni_katastralni_uzemi()
+    cast_ku = porovnat_tabulky(SLOZKA_PUVODNI, SLOZKA_NOVE, (SOUBOR_KU,))
+    if cast_ku["chybejici_puvodni"] or cast_ku["chybejici_nove"]:
+        raise ValueError(f"Chybějící původní nebo nové CSV: {SOUBOR_KU}.")
+    for klic in porovnani:
+        porovnani[klic].extend(cast_ku[klic])
+
     novy_strom = bool(porovnani["zmenene"])
     zdroje = (
         ("ico_obce.csv", stahni_ico, nahradit_ico_obci),
@@ -137,7 +149,7 @@ def aktualizovat_data() -> Dict[str, object]:
 
         if novy_strom:
             nove_doplnky = [nazev for nazev in importy if nazev not in pouzite_puvodni_csv]
-            for nazev in list(SOUBORY_CSU) + nove_doplnky:
+            for nazev in list(SOUBORY_STROMU) + nove_doplnky:
                 nahradit_csv(nazev)
         else:
             for nazev, _, nahradit in zdroje:
