@@ -96,7 +96,7 @@ def overit_strom(
                p.pk_id IS NULL
                OR (u.typ = 'OKRES' AND p.typ <> 'KRAJ')
                OR (u.typ = 'OBEC' AND p.typ <> 'OKRES')
-               OR (u.typ IN ('MESTSKA_CAST', 'CAST_OBCE') AND p.typ <> 'OBEC')
+               OR (u.typ IN ('MESTSKA_CAST', 'CAST_OBCE', 'KATASTRALNI_UZEMI') AND p.typ <> 'OBEC')
                OR u.ltree_path::text IS DISTINCT FROM p.ltree_path::text || '.' || u.pk_id::text
            ))
         LIMIT 1;
@@ -115,6 +115,7 @@ def overit_strom(
     for typ, typy_id in (
         ("KRAJ", ("NUTS3", "RUIAN")), ("OKRES", ("LAU1", "RUIAN")),
         ("OBEC", ("LAU2",)), ("MESTSKA_CAST", ("MOMC",)), ("CAST_OBCE", ("KOD_COBCE",)),
+        ("KATASTRALNI_UZEMI", ("KOD_KU",)),
     ):
         for typ_id in typy_id:
             ocekavane[(typ, typ_id)] = pocty[typ]
@@ -149,6 +150,10 @@ def sestavit_uzemni_zaklad(
     casti_obci = nacist_csv(slozka / "VAZ0042_0043_CS.csv",
         ["chodnota1", "text1", "chodnota2"], ["chodnota1"],
         formaty_kodu={"chodnota1": r"[0-9]{1,6}", "chodnota2": r"[0-9]{6}"})
+
+    katastralni_uzemi = nacist_csv(slozka / "UI_KATASTRALNI_UZEMI.csv",
+        ["KOD", "NAZEV", "OBEC_KOD"], ["KOD"],
+        formaty_kodu={"KOD": r"[0-9]{6}", "OBEC_KOD": r"[0-9]{6}"})
 
     cursor.execute(
         sql.SQL("CREATE SCHEMA {schema}").format(schema=sql.Identifier(schema))
@@ -205,8 +210,15 @@ def sestavit_uzemni_zaklad(
                 raise ValueError(f"{typ} {row['chodnota1']}: chybí obec {row['chodnota2']}.")
             vlozit_uzel(cursor, typ, row["text1"], rodic, [(typ_id, row["chodnota1"], priorita)])
 
+    for row in katastralni_uzemi:
+        rodic = obce_podle_lau2.get(row["OBEC_KOD"])
+        if rodic is None:
+            raise ValueError(f"KÚ {row['KOD']}: chybí obec {row['OBEC_KOD']}.")
+        vlozit_uzel(cursor, "KATASTRALNI_UZEMI", row["NAZEV"], rodic,
+            [("KOD_KU", row["KOD"], 85)])
+
     pocty = {"KRAJ": len(kraje), "OKRES": len(okresy), "OBEC": len(obce),
-             "MESTSKA_CAST": len(mestske_casti), "CAST_OBCE": len(casti_obci)}
+             "MESTSKA_CAST": len(mestske_casti), "CAST_OBCE": len(casti_obci), "KATASTRALNI_UZEMI": len(katastralni_uzemi)}
     overit_strom(cursor, pocty, len(okresy_bez_ruian))
     cursor.execute("CREATE INDEX idx_ids_value_btree ON ids (value)")
     cursor.execute("CREATE INDEX idx_ids_value_gin ON ids USING GIN (value public.gin_trgm_ops)")
