@@ -2,6 +2,7 @@
 import csv
 import os
 from pathlib import Path
+import sys
 import tempfile
 from typing import Optional
 
@@ -64,6 +65,6 @@ if __name__ == "__main__":
     try:
         pocet = stahni_q_kody()
     except Exception as chyba:
-        print(f"Stažení Wikidat selhalo: {chyba}")
+        print(f"Stažení Wikidat selhalo: {chyba}", file=sys.stderr)
         raise SystemExit(1)
     print(f"Uloženo {pocet} záznamů do {CILOVY_SOUBOR}.")

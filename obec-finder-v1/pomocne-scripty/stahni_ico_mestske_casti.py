@@ -2,6 +2,7 @@
 import csv
 import os
 from pathlib import Path
+import sys
 import tempfile
 from typing import Optional
 
@@ -62,6 +63,6 @@ if __name__ == "__main__":
     try:
         pocet = stahni_ico_mestske_casti()
     except Exception as chyba:
-        print(f"Stažení IČO pražských městských částí z ARES selhalo: {chyba}")
+        print(f"Stažení IČO pražských městských částí z ARES selhalo: {chyba}", file=sys.stderr)
         raise SystemExit(1)
     print(f"ARES: uloženo {pocet} záznamů do {CILOVY_SOUBOR}.")

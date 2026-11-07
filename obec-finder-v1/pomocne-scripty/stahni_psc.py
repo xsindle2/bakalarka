@@ -3,6 +3,7 @@ import csv
 import io
 import os
 from pathlib import Path
+import sys
 import tempfile
 import zipfile
 from typing import Optional
@@ -28,22 +29,24 @@ def stahni_psc() -> int:
     with zipfile.ZipFile(io.BytesIO(obsah_zip)) as archiv:
         obsah = archiv.read("zv_cobce_psc.csv")
 
-    reader = csv.reader(
+    reader = csv.DictReader(
         io.StringIO(obsah.decode("windows-1250"), newline=""), delimiter=";", strict=True,
     )
-    if next(reader, None) != HLAVICKA_PSC:
+    if not set(HLAVICKA_PSC).issubset(reader.fieldnames or []):
         raise ValueError(f"Česká pošta vrátila neočekávanou hlavičku tabulky {CILOVY_SOUBOR}.")
 
     radky = []
     for radek in reader:
-        if len(radek) != len(HLAVICKA_PSC) or not any(hodnota.strip() for hodnota in radek):
+        if None in radek or any(hodnota is None for hodnota in radek.values()):
+            raise ValueError(f"Tabulka {CILOVY_SOUBOR}, řádek {reader.line_num}: nesprávný počet sloupců.")
+        radek = {sloupec: radek[sloupec].strip() for sloupec in HLAVICKA_PSC}
+        if not any(radek.values()):
             raise ValueError(f"Tabulka {CILOVY_SOUBOR} obsahuje neplatný řádek.")
-        radek = [hodnota.strip() for hodnota in radek]
-        for index, sloupec in enumerate(HLAVICKA_PSC):
+        for sloupec in HLAVICKA_PSC:
             if sloupec == "psc":
-                radek[index] = radek[index].replace(" ", "")
+                radek[sloupec] = radek[sloupec].replace(" ", "")
             if sloupec.startswith("kod") or sloupec == "psc":
-                radek[index] = radek[index].lstrip("0")
+                radek[sloupec] = radek[sloupec].lstrip("0")
         radky.append(radek)
     if not radky:
         raise ValueError(f"Tabulka {CILOVY_SOUBOR} neobsahuje žádná data.")
@@ -56,8 +59,8 @@ def stahni_psc() -> int:
             dir=os.path.dirname(CILOVY_SOUBOR) or ".", delete=False,
         ) as soubor:
             docasna_cesta = soubor.name
-            writer = csv.writer(soubor, delimiter=";")
-            writer.writerow(HLAVICKA_PSC)
+            writer = csv.DictWriter(soubor, fieldnames=HLAVICKA_PSC, delimiter=";")
+            writer.writeheader()
             writer.writerows(radky)
         os.replace(docasna_cesta, CILOVY_SOUBOR)
         docasna_cesta = None
@@ -72,6 +75,6 @@ if __name__ == "__main__":
     try:
         pocet = stahni_psc()
     except Exception as chyba:
-        print(f"Stažení PSČ selhalo: {chyba}")
+        print(f"Stažení PSČ selhalo: {chyba}", file=sys.stderr)
         raise SystemExit(1)
     print(f"Uloženo {pocet} záznamů do {CILOVY_SOUBOR}.")

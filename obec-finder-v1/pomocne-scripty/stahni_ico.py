@@ -11,6 +11,7 @@ Je nutne to delat pres monitor, protoze ares neobsahuje vazbu na ZUJ kod."""
 import csv
 import os
 from pathlib import Path
+import sys
 import tempfile
 from datetime import datetime
 from typing import Optional
@@ -70,6 +71,6 @@ if __name__ == "__main__":
     try:
         pocet = stahni_ico()
     except Exception as chyba:
-        print(f"Stažení IČO obcí z MONITOR JSON selhalo: {chyba}")
+        print(f"Stažení IČO obcí z MONITOR JSON selhalo: {chyba}", file=sys.stderr)
         raise SystemExit(1)
     print(f"Uloženo {pocet} záznamů do {CILOVY_SOUBOR}.")

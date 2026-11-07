@@ -3,6 +3,7 @@ import csv
 import io
 import os
 from pathlib import Path
+import sys
 import tempfile
 from datetime import datetime
 from typing import Optional
@@ -46,19 +47,20 @@ def stahni_tabulku(
         odpoved.raise_for_status()
         obsah = odpoved.content
 
-    reader = csv.reader(io.StringIO(obsah.decode("utf-8"), newline=""), strict=True)
-    if next(reader, None) != hlavicka:
+    reader = csv.DictReader(io.StringIO(obsah.decode("utf-8"), newline=""), strict=True)
+    if not set(hlavicka).issubset(reader.fieldnames or []):
         raise ValueError(f"ČSÚ vrátilo neočekávanou hlavičku tabulky {cilovy_soubor}.")
 
     radky = []
     sloupce_kodu = ("chodnota1", "chodnota2") if cisvaz else ("chodnota", "kod_ruian")
     for radek in reader:
-        if len(radek) != len(hlavicka) or not any(hodnota.strip() for hodnota in radek):
+        if None in radek or any(hodnota is None for hodnota in radek.values()):
+            raise ValueError(f"Tabulka {cilovy_soubor}, řádek {reader.line_num}: nesprávný počet sloupců.")
+        radek = {sloupec: radek[sloupec].strip() for sloupec in hlavicka}
+        if not any(radek.values()):
             raise ValueError(f"Tabulka {cilovy_soubor} obsahuje neplatný řádek.")
-        radek = [hodnota.strip() for hodnota in radek]
         for sloupec in sloupce_kodu:
-            index = hlavicka.index(sloupec)
-            radek[index] = radek[index].lstrip("0")
+            radek[sloupec] = radek[sloupec].lstrip("0")
         radky.append(radek)
     if not radky:
         raise ValueError(f"Tabulka {cilovy_soubor} neobsahuje žádná data.")
@@ -71,8 +73,8 @@ def stahni_tabulku(
             dir=os.path.dirname(cilovy_soubor) or ".", delete=False,
         ) as soubor:
             docasna_cesta = soubor.name
-            writer = csv.writer(soubor)
-            writer.writerow(hlavicka)
+            writer = csv.DictWriter(soubor, fieldnames=hlavicka)
+            writer.writeheader()
             writer.writerows(radky)
         os.replace(docasna_cesta, cilovy_soubor)
         docasna_cesta = None
@@ -102,5 +104,5 @@ if __name__ == "__main__":
     try:
         stahni_csu()
     except Exception as chyba:
-        print(f"Stažení tabulek selhalo: {chyba}")
+        print(f"Stažení tabulek selhalo: {chyba}", file=sys.stderr)
         raise SystemExit(1)

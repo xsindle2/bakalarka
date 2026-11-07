@@ -5,6 +5,7 @@ ID se čte z přesměrování - samotné profily úřadů se nestahují.
 import csv
 import os
 from pathlib import Path
+import sys
 import re
 import tempfile
 import time
@@ -113,5 +114,5 @@ if __name__ == "__main__":
     try:
         stahni_ids()
     except Exception as chyba:
-        print(f"Stažení ID z mesta.obce.cz selhalo: {chyba}")
+        print(f"Stažení ID z mesta.obce.cz selhalo: {chyba}", file=sys.stderr)
         raise SystemExit(1)
