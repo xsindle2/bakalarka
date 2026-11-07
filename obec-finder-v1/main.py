@@ -194,7 +194,7 @@ def validate_id(pozadavek: PozadavekValidace) -> VysledekValidace:
 @app.get("/search/{query}")
 def search_id(
     query: str,
-    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc|mesta_obce)$")):
+    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc|mesta_obce|kod_ku)$")):
     conn = get_db_connection()
     try:
         conn.set_session(isolation_level="REPEATABLE READ", readonly=True)
@@ -224,6 +224,7 @@ def search_id(
                     elif search_type == 'kod_cobce': db_type_filter = 'KOD_COBCE'
                     elif search_type == 'psc': db_type_filter = 'PSC'
                     elif search_type == 'mesta_obce': db_type_filter = 'MESTA_OBCE'
+                    elif search_type == 'kod_ku': db_type_filter = 'KOD_KU'
 
                 hledany_dotaz = query.replace(" ", "").strip()
 
