@@ -28,11 +28,6 @@ FORMATY: Dict[str, Tuple[str, str]] = {
 }
 
 
-class PozadavekValidace(BaseModel):
-    type: TypIdentifikatoru
-    value: StrictStr
-
-
 class VysledekValidace(BaseModel):
     type: str
     input_value: str
