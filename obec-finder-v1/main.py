@@ -13,7 +13,7 @@ from aktivni_data import (
 )
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from typing import List
+from typing import Dict, List, Tuple
 from validace_identifikatoru import (
     TypIdentifikatoru, VysledekValidace,
     overit_identifikator,
@@ -192,6 +192,54 @@ def validate_id(
     return overit_identifikator(type, value)
 
 
+def sestavit_vysledky_hledani(
+    cursor: psycopg2.extensions.cursor, shody: List[Tuple[int, str, str, str]],
+) -> List[Dict[str, object]]:
+    """Vrátí přímé shody i předky se stejným kódem, typem a mírou shody."""
+    nalezene_pk = {pk for pk, _, _, _ in shody}
+
+    cursor.execute("""
+        SELECT DISTINCT u.pk_id, u.nazev, u.typ, u.ltree_path,
+                        nlevel(u.ltree_path) AS hloubka
+        FROM geo_locations n
+        JOIN geo_locations u ON u.ltree_path @> n.ltree_path OR u.pk_id = n.pk_id
+        WHERE n.pk_id = ANY(%s)
+        ORDER BY hloubka DESC, u.pk_id;
+    """, (list(nalezene_pk),))
+    uzly = {}
+    predci = {}
+    for pk, nazev, typ, cesta, _ in cursor.fetchall():
+        uzly[pk] = {"nazev": nazev, "typ_uzlu": typ}
+        predci[pk] = [int(rodic_pk) for rodic_pk in str(cesta).split(".")[:-1]] if cesta else []
+
+    for pk, uzel in uzly.items():
+        rodice = []
+        for rodic_pk in predci[pk]:
+            rodic = uzly[rodic_pk]
+            rodice.append(f"{rodic['nazev']} ({rodic['typ_uzlu']})")
+        uzel["cesta"] = " > ".join(rodice) if rodice else "Kořenový uzel"
+
+    # Přímé shody zůstávají první.
+    poradi = list(shody)
+    for rodic_pk in uzly:
+        for pk, kod, typ, shoda in shody:
+            if rodic_pk in predci[pk]:
+                poradi.append((rodic_pk, kod, typ, shoda))
+
+    vysledky = []
+    pouzite_shody = set()
+    for pk, kod, typ, shoda in poradi:
+        klic = (pk, kod, typ)
+        if klic in pouzite_shody:
+            continue
+        pouzite_shody.add(klic)
+        vysledky.append({
+            "nazev": uzly[pk]["nazev"], "kod": kod, "typ": typ,
+            "typ_uzlu": uzly[pk]["typ_uzlu"], "shoda": shoda, "cesta": uzly[pk]["cesta"],
+        })
+    return vysledky
+
+
 # --- VYHLEDÁVACÍ ENDPOINT ---
 
 @app.get("/search/{query}")
@@ -237,7 +285,7 @@ def search_id(
                     hledane_hodnoty.append(hledany_dotaz.zfill(8))
 
                 sql_exact = """
-                    SELECT gl.nazev, i.value, i.type, i.priority, gl.typ, gl.ltree_path
+                    SELECT gl.pk_id, i.value, i.type, i.priority
                     FROM ids i
                     JOIN geo_locations gl ON i.location_pk = gl.pk_id
                     WHERE i.value = ANY(%s)
@@ -254,25 +302,8 @@ def search_id(
                 presne_vysledky = cursor.fetchall()
 
                 if presne_vysledky:
-                    response_data = []
-                    for row in presne_vysledky:
-                        nazev, kod, typ_kodu, priorita, typ_uzlu, ltree_cesta = row
-
-                        rodice_seznam = []
-                        if ltree_cesta:
-                            sql_rodice = "SELECT nazev, typ FROM geo_locations WHERE ltree_path @> %s AND ltree_path != %s ORDER BY nlevel(ltree_path) ASC;"
-                            cursor.execute(sql_rodice, (ltree_cesta, ltree_cesta))
-                            for r in cursor.fetchall():
-                                rodice_seznam.append(f"{r[0]} ({r[1]})")
-
-                        response_data.append({
-                            "obec": nazev,
-                            "kod": kod,
-                            "typ": typ_kodu,
-                            "typ_uzlu": typ_uzlu,
-                            "shoda": "100 %",
-                            "cesta": " > ".join(rodice_seznam) if rodice_seznam else "Kořenový uzel"
-                        })
+                    shody = [(pk, kod, typ, "100 %") for pk, kod, typ, _ in presne_vysledky]
+                    response_data = sestavit_vysledky_hledani(cursor, shody)
 
                     return {
                         "status": "exact_match",
@@ -283,7 +314,7 @@ def search_id(
 
                 # FUZZY VYHLEDÁVÁNÍ
                 sql_fuzzy_final = """
-                    SELECT gl.nazev, i.value, i.type, (i.value <-> %s) as vzdalenost, gl.typ, gl.ltree_path
+                    SELECT gl.pk_id, i.value, i.type, (i.value <-> %s) as vzdalenost
                     FROM ids i
                     JOIN geo_locations gl ON i.location_pk = gl.pk_id
                 """
@@ -302,35 +333,21 @@ def search_id(
                 if not vysledky_fuzzy:
                     raise HTTPException(status_code=404, detail="Nic nenalezeno.")
 
-                response_data = []
-                for row in vysledky_fuzzy:
-                    nazev, kod, typ_kodu, vzdalenost, typ_uzlu, ltree_cesta = row
+                shody = []
+                for pk, kod, typ, vzdalenost in vysledky_fuzzy:
                     shoda_procenta = round((1 - vzdalenost) * 100, 2)
-                    if shoda_procenta < 10: continue
+                    if shoda_procenta < 10:
+                        continue
+                    shody.append((pk, kod, typ, f"{shoda_procenta} %"))
 
-                    rodice_seznam = []
-                    if ltree_cesta:
-                        sql_rodice = "SELECT nazev, typ FROM geo_locations WHERE ltree_path @> %s AND ltree_path != %s ORDER BY nlevel(ltree_path) ASC;"
-                        cursor.execute(sql_rodice, (ltree_cesta, ltree_cesta))
-                        for r in cursor.fetchall():
-                            rodice_seznam.append(f"{r[0]} ({r[1]})")
-
-                    response_data.append({
-                        "obec": nazev,
-                        "kod": kod,
-                        "typ": typ_kodu,
-                        "typ_uzlu": typ_uzlu,
-                        "shoda": f"{shoda_procenta} %",
-                        "cesta": " > ".join(rodice_seznam) if rodice_seznam else "Kořenový uzel"
-                    })
-
-
-                if not response_data:
+                if not shody:
                     raise HTTPException(status_code=404, detail="Nic dostatečně podobného nenalezeno.")
+                response_data = sestavit_vysledky_hledani(cursor, shody)
 
                 return {
                     "status": "fuzzy_match",
                     "filter": db_type_filter if db_type_filter else "all",
+                    "count": len(response_data),
                     "results": response_data
                 }
     finally:
