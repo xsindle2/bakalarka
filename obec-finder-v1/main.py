@@ -195,8 +195,9 @@ def validate_id(
 def sestavit_vysledky_hledani(
     cursor: psycopg2.extensions.cursor, shody: List[Tuple[int, str, str, str]],
     location_type: Optional[str] = None,
+    include_parents: bool = True,
 ) -> List[Dict[str, object]]:
-    """Vrátí přímé shody i předky se stejným kódem, typem a mírou shody."""
+    """Vrátí přímé shody a volitelně předky."""
     nalezene_pk = {pk for pk, _, _, _ in shody}
 
     cursor.execute("""
@@ -222,10 +223,11 @@ def sestavit_vysledky_hledani(
 
     # Přímé shody zůstávají první.
     poradi = list(shody)
-    for rodic_pk in uzly:
-        for pk, kod, typ, shoda in shody:
-            if rodic_pk in predci[pk]:
-                poradi.append((rodic_pk, kod, typ, shoda))
+    if include_parents:
+        for rodic_pk in uzly:
+            for pk, kod, typ, shoda in shody:
+                if rodic_pk in predci[pk]:
+                    poradi.append((rodic_pk, kod, typ, shoda))
 
     vysledky = []
     pouzite_shody = set()
@@ -250,7 +252,16 @@ def search_id(
     query: str,
     search_type: Optional[str] = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc|mesta_obce|kod_ku)$"),
     location_type: Optional[str] = Query(None, regex="^(kraj|okres|obec|mestska_cast|cast_obce|katastralni_uzemi)$"),
+    fuzzy: bool = Query(True, description="Při nenalezení přesné shody zkusit přibližné hledání."),
+    fuzzy_limit: int = Query(5, ge=1, le=100, description="Maximum přibližných kandidátů před přidáním předků; přesné shody neomezuje."),
+    min_similarity: float = Query(10, ge=0, le=100, description="Minimální podobnost přibližné shody v procentech (0–100)."),
+    include_parents: bool = Query(True, description="Přidat předky přímých shod. Při false se location_type vztahuje jen na přímé shody."),
 ) -> Dict[str, object]:
+    
+    hledany_dotaz = query.replace(" ", "").strip()
+    if not hledany_dotaz:
+        raise HTTPException(status_code=422, detail="Hledaný identifikátor nesmí být prázdný.")
+
     conn = get_db_connection()
     try:
         conn.set_session(isolation_level="REPEATABLE READ", readonly=True)
@@ -282,17 +293,22 @@ def search_id(
                     elif search_type == 'mesta_obce': db_type_filter = 'MESTA_OBCE'
                     elif search_type == 'kod_ku': db_type_filter = 'KOD_KU'
 
-                hledany_dotaz = query.replace(" ", "").strip()
                 db_location_filter = location_type.upper() if location_type else None
-                # Kandidát musí mít požadovaný typ sám nebo mezi předky.
+                # S předky může mít požadovaný typ kandidát nebo jeho předek.
+                # Bez předků musí požadovanému typu odpovídat přímo kandidát.
                 # Filtr před LIMIT zabrání tomu, aby fuzzy místa zabrala jiná území.
-                location_condition = """
-                    AND EXISTS (
-                        SELECT 1 FROM geo_locations u
-                        WHERE u.typ = %s
-                          AND (u.ltree_path @> gl.ltree_path OR u.pk_id = gl.pk_id)
-                    )
-                """ if db_location_filter else ""
+                location_condition = ""
+                if db_location_filter:
+                    if include_parents:
+                        location_condition = """
+                            AND EXISTS (
+                                SELECT 1 FROM geo_locations u
+                                WHERE u.typ = %s
+                                  AND (u.ltree_path @> gl.ltree_path OR u.pk_id = gl.pk_id)
+                            )
+                        """
+                    else:
+                        location_condition = " AND gl.typ = %s"
 
                 # exact match
                 hledane_hodnoty = [hledany_dotaz]
@@ -314,14 +330,14 @@ def search_id(
                     sql_exact += location_condition
                     params_exact.append(db_location_filter)
 
-                sql_exact += " ORDER BY i.priority DESC;"
+                sql_exact += " ORDER BY i.priority DESC, i.value, i.type, gl.pk_id;"
 
                 cursor.execute(sql_exact, tuple(params_exact))
                 presne_vysledky = cursor.fetchall()
 
                 if presne_vysledky:
                     shody = [(pk, kod, typ, "100 %") for pk, kod, typ, _ in presne_vysledky]
-                    response_data = sestavit_vysledky_hledani(cursor, shody, db_location_filter)
+                    response_data = sestavit_vysledky_hledani(cursor, shody, db_location_filter, include_parents)
 
                     return {
                         "status": "exact_match",
@@ -330,6 +346,9 @@ def search_id(
                         "count": len(response_data),
                         "results": response_data
                     }
+
+                if not fuzzy:
+                    raise HTTPException(status_code=404, detail="Přesná shoda nenalezena.")
 
                 # FUZZY VYHLEDÁVÁNÍ
                 sql_fuzzy_final = """
@@ -347,8 +366,8 @@ def search_id(
                     sql_fuzzy_final += location_condition
                     query_params.append(db_location_filter)
 
-                sql_fuzzy_final += " ORDER BY (i.value <-> %s) ASC, i.priority DESC LIMIT 5;"
-                query_params.append(hledany_dotaz)
+                sql_fuzzy_final += " ORDER BY (i.value <-> %s) ASC, i.priority DESC, i.value, i.type, gl.pk_id LIMIT %s;"
+                query_params.extend([hledany_dotaz, fuzzy_limit])
 
                 cursor.execute(sql_fuzzy_final, tuple(query_params))
                 vysledky_fuzzy = cursor.fetchall()
@@ -359,13 +378,13 @@ def search_id(
                 shody = []
                 for pk, kod, typ, vzdalenost in vysledky_fuzzy:
                     shoda_procenta = round((1 - vzdalenost) * 100, 2)
-                    if shoda_procenta < 10:
+                    if shoda_procenta < min_similarity:
                         continue
                     shody.append((pk, kod, typ, f"{shoda_procenta} %"))
 
                 if not shody:
                     raise HTTPException(status_code=404, detail="Nic dostatečně podobného nenalezeno.")
-                response_data = sestavit_vysledky_hledani(cursor, shody, db_location_filter)
+                response_data = sestavit_vysledky_hledani(cursor, shody, db_location_filter, include_parents)
 
                 return {
                     "status": "fuzzy_match",
