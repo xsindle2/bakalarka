@@ -13,7 +13,7 @@ from aktivni_data import (
 )
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from validace_identifikatoru import (
     TypIdentifikatoru, VysledekValidace,
     overit_identifikator,
@@ -194,6 +194,7 @@ def validate_id(
 
 def sestavit_vysledky_hledani(
     cursor: psycopg2.extensions.cursor, shody: List[Tuple[int, str, str, str]],
+    location_type: Optional[str] = None,
 ) -> List[Dict[str, object]]:
     """Vrátí přímé shody i předky se stejným kódem, typem a mírou shody."""
     nalezene_pk = {pk for pk, _, _, _ in shody}
@@ -229,6 +230,8 @@ def sestavit_vysledky_hledani(
     vysledky = []
     pouzite_shody = set()
     for pk, kod, typ, shoda in poradi:
+        if location_type and uzly[pk]["typ_uzlu"] != location_type:
+            continue
         klic = (pk, kod, typ)
         if klic in pouzite_shody:
             continue
@@ -245,7 +248,9 @@ def sestavit_vysledky_hledani(
 @app.get("/search/{query}")
 def search_id(
     query: str,
-    search_type: str = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc|mesta_obce|kod_ku)$")):
+    search_type: Optional[str] = Query(None, regex="^(ico|zuj|lau2|nuts3|lau1|ruian|qcode|geonames|momc|kod_cobce|psc|mesta_obce|kod_ku)$"),
+    location_type: Optional[str] = Query(None, regex="^(kraj|okres|obec|mestska_cast|cast_obce|katastralni_uzemi)$"),
+) -> Dict[str, object]:
     conn = get_db_connection()
     try:
         conn.set_session(isolation_level="REPEATABLE READ", readonly=True)
@@ -278,6 +283,16 @@ def search_id(
                     elif search_type == 'kod_ku': db_type_filter = 'KOD_KU'
 
                 hledany_dotaz = query.replace(" ", "").strip()
+                db_location_filter = location_type.upper() if location_type else None
+                # Kandidát musí mít požadovaný typ sám nebo mezi předky.
+                # Filtr před LIMIT zabrání tomu, aby fuzzy místa zabrala jiná území.
+                location_condition = """
+                    AND EXISTS (
+                        SELECT 1 FROM geo_locations u
+                        WHERE u.typ = %s
+                          AND (u.ltree_path @> gl.ltree_path OR u.pk_id = gl.pk_id)
+                    )
+                """ if db_location_filter else ""
 
                 # exact match
                 hledane_hodnoty = [hledany_dotaz]
@@ -295,6 +310,9 @@ def search_id(
                 if db_type_filter:
                     sql_exact += " AND i.type = %s"
                     params_exact.append(db_type_filter)
+                if db_location_filter:
+                    sql_exact += location_condition
+                    params_exact.append(db_location_filter)
 
                 sql_exact += " ORDER BY i.priority DESC;"
 
@@ -303,11 +321,12 @@ def search_id(
 
                 if presne_vysledky:
                     shody = [(pk, kod, typ, "100 %") for pk, kod, typ, _ in presne_vysledky]
-                    response_data = sestavit_vysledky_hledani(cursor, shody)
+                    response_data = sestavit_vysledky_hledani(cursor, shody, db_location_filter)
 
                     return {
                         "status": "exact_match",
                         "filter": db_type_filter if db_type_filter else "all",
+                        "location_filter": db_location_filter if db_location_filter else "all",
                         "count": len(response_data),
                         "results": response_data
                     }
@@ -317,12 +336,16 @@ def search_id(
                     SELECT gl.pk_id, i.value, i.type, (i.value <-> %s) as vzdalenost
                     FROM ids i
                     JOIN geo_locations gl ON i.location_pk = gl.pk_id
+                    WHERE TRUE
                 """
                 query_params = [hledany_dotaz]
 
                 if db_type_filter:
-                    sql_fuzzy_final += " WHERE i.type = %s "
+                    sql_fuzzy_final += " AND i.type = %s "
                     query_params.append(db_type_filter)
+                if db_location_filter:
+                    sql_fuzzy_final += location_condition
+                    query_params.append(db_location_filter)
 
                 sql_fuzzy_final += " ORDER BY (i.value <-> %s) ASC, i.priority DESC LIMIT 5;"
                 query_params.append(hledany_dotaz)
@@ -342,11 +365,12 @@ def search_id(
 
                 if not shody:
                     raise HTTPException(status_code=404, detail="Nic dostatečně podobného nenalezeno.")
-                response_data = sestavit_vysledky_hledani(cursor, shody)
+                response_data = sestavit_vysledky_hledani(cursor, shody, db_location_filter)
 
                 return {
                     "status": "fuzzy_match",
                     "filter": db_type_filter if db_type_filter else "all",
+                    "location_filter": db_location_filter if db_location_filter else "all",
                     "count": len(response_data),
                     "results": response_data
                 }
